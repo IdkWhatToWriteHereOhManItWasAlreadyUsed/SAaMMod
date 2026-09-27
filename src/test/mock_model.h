@@ -39,7 +39,7 @@ namespace test
             log("stop", run.model_time(), "generator stopped");
         }
 
-        void log(const std::string& action, double_t time, const std::string& msg) override
+        void log(const std::string& action, double_t time, const std::string& msg)
         {
             std::cout << "[" << action << "] t=" << time << " " << msg << "\n";
         }

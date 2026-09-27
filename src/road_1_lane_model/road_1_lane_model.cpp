@@ -2,6 +2,7 @@
 
 #include <fstream>
 #include <stdexcept>
+#include <iostream>
 #include <json/json.h>
 
 road_1_lane_model::config::config(const std::string& path)
@@ -72,11 +73,4 @@ void road_1_lane_model::stop(runner::i_run& run)
 {
     run.delete_event(car_generator_a_);
     run.delete_event(car_generator_b_);
-}
-
-void road_1_lane_model::log(const std::string& action,
-                            double_t time,
-                            const std::string& msg)
-{
-    // ...
 }
