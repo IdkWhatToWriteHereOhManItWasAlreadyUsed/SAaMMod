@@ -3,11 +3,11 @@ project(math)
 
 set(CMAKE_CXX_STANDARD 20)
 
-add_library(${PROJECT_NAME}
-    rng.cpp distributions.cpp
+add_library(math
+        rng.cpp
+        rng.h
 )
 
-target_include_directories(${PROJECT_NAME} PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/"
+target_include_directories(math PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}"
 )
-

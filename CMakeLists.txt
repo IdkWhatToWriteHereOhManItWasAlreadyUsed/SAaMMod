@@ -5,6 +5,8 @@ set(CMAKE_CXX_STANDARD 20)
 
 # подмодули
 add_subdirectory(runner)
+add_subdirectory(math)
+
 
 # основной executable
 add_executable(${PROJECT_NAME}
