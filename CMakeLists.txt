@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD 20)
 add_subdirectory(runner)
 add_subdirectory(math)
 add_subdirectory(logging)
+add_subdirectory(visualizer)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(JSONCPP REQUIRED jsoncpp)

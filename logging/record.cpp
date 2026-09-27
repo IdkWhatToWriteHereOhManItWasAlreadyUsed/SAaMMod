@@ -7,10 +7,10 @@ namespace logging
         // compact-запись: без отступов и комментариев
         static const Json::StreamWriterBuilder builder = []
         {
-            Json::StreamWriterBuilder builder;
-            builder["indentation"] = "";
-            builder["commentStyle"] = "None";
-            return builder;
+            Json::StreamWriterBuilder b;
+            b["indentation"] = "";
+            b["commentStyle"] = "None";
+            return b;
         }();
 
         return builder;

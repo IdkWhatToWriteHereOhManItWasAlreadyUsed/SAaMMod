@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD 20)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SDL3 REQUIRED sdl3)
+pkg_check_modules(SDL3_TTF REQUIRED sdl3-ttf)
 pkg_check_modules(JSONCPP REQUIRED jsoncpp)
 
 add_executable(${PROJECT_NAME}
@@ -23,10 +24,12 @@ add_executable(${PROJECT_NAME}
 target_include_directories(${PROJECT_NAME} PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src"
         ${SDL3_INCLUDE_DIRS}
+        ${SDL3_TTF_INCLUDE_DIRS}
         ${JSONCPP_INCLUDE_DIRS}
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
+        ${SDL3_TTF_LIBRARIES}
         ${SDL3_LIBRARIES}
         ${JSONCPP_LIBRARIES}
 )

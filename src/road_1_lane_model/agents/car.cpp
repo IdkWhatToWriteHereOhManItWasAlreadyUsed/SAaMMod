@@ -59,10 +59,19 @@ namespace agents
             return;
         }
 
-        // стартуем
+        // пытаемся стартовать
         drive_start_time_ = run.model_time();
-        logging::logger::instance().write_car(drive_start_time_, id_, "start_driving", direction_);
-        road_.enter();
+
+        // если ближайшая машина слишком близко
+        if (auto interval = drive_start_time_ - road_.last_car_enter_time(); interval < road_.cars_interval())
+        {
+            road_.push_front(direction_, self);
+            run.delete_active_event();
+            return;
+        }
+
+        logging::logger::instance().write_car(drive_start_time_, id_, "enter", direction_);
+        road_.enter(drive_start_time_);
 
         run.move_active_event
         (
@@ -85,7 +94,7 @@ namespace agents
     void car::finish_driving(runner::i_run& run)
     {
         departure_time_ = run.model_time();
-        logging::logger::instance().write_car(departure_time_, id_, "finish_driving", direction_);
+        logging::logger::instance().write_car(departure_time_, id_, "leave", direction_);
         road_.exit();
 
         // сразу будим следующего — место освободилось

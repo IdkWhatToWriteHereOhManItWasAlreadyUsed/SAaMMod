@@ -22,9 +22,15 @@ namespace resources
         return cars_on_segment_ < capacity_;
     }
 
-    void road_segment::enter()
+    void road_segment::enter(double_t time)
     {
+        last_car_enter_time_ = time;
         ++cars_on_segment_;
+    }
+
+    double_t road_segment::last_car_enter_time() const
+    {
+        return last_car_enter_time_;
     }
 
     void road_segment::exit()

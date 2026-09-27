@@ -94,6 +94,7 @@ namespace scene
     double scene::end_time() const { return data_.end_time; }
     double scene::time() const { return time_; }
     char scene::light_phase() const { return phase_; }
+    double scene::passage_time() const { return data_.default_passage_time; }
     const std::vector<waiting_car>& scene::waiting() const { return waiting_; }
     const std::vector<moving_car>& scene::moving() const { return moving_; }
 

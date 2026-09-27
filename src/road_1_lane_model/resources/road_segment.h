@@ -23,11 +23,12 @@ namespace resources
         std::size_t queue_size(char direction) const;
 
         bool is_free() const;
-        void enter();
+        void enter(double_t time);
         void exit();
 
         double_t passage_time() const;
         double_t cars_interval() const;
+        double_t last_car_enter_time() const;
         int capacity() const;
 
     private:
@@ -36,6 +37,7 @@ namespace resources
 
         double_t passage_time_;
         double_t cars_interval_;
+        double_t last_car_enter_time_ = 0;
         int capacity_;
         int cars_on_segment_ = 0;
         std::vector<std::shared_ptr<agents::car>> queue_a_;

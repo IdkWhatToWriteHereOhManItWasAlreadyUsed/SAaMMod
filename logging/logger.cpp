@@ -76,13 +76,12 @@ namespace logging
             return;
         }
 
-        buffer_ += "{\"timestamp\":" + record::value_of(model_time);
+        buffer_ += "{\"time\":" + record::value_of(model_time);
         buffer_ += ",\"sender\":" + record::value_of(sender);
 
-        const std::string body = fields.str();
-        if (body.size() > 2) // набор полей непустой
+        if (const std::string body = fields.str(); body.size() > 2) // набор полей непустой
         {
-            buffer_ += ',' + body;
+            buffer_ += ",\"data\":"  + body;
         }
         buffer_ += "}\n";
 

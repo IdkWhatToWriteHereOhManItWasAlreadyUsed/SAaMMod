@@ -10,6 +10,8 @@ add_library(${PROJECT_NAME}
         # .cpp
         logger.cpp
         # headers (для IDE)
+        record.cpp
+        record.h
         logger.h
 )
 

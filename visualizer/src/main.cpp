@@ -6,6 +6,7 @@
 
 #include <SDL3/SDL.h>
 
+#include "font.h"
 #include "render.h"
 #include "scene.h"
 #include "trace.h"
@@ -29,14 +30,6 @@ namespace
 
 int main(int argc, char** argv)
 {
-   // if (argc < 2)
-    {
-        std::cerr << "usage: " << argv[0] << " <trace.jsonl> [speed]\n"
-                  << "  speed — во сколько раз быстрее модельного времени, по умолчанию "
-                  << default_speed << "\n";
-      //  return EXIT_FAILURE;
-    }
-
     const std::string path = "/home/dmitry/CLionProjects/SAiMMOD_Lab2/lab2/Lab2_Code/logs/road_1_lane.jsonl";//argv[1];
 
     double speed = default_speed;
@@ -66,6 +59,17 @@ int main(int argc, char** argv)
         return EXIT_FAILURE;
     }
 
+    try
+    {
+        font::init();
+    }
+    catch (const std::exception& error)
+    {
+        std::cerr << "не удалось загрузить шрифт: " << error.what() << "\n";
+        SDL_Quit();
+        return EXIT_FAILURE;
+    }
+
     SDL_Window* window = SDL_CreateWindow("Road trace",
                                           render::layout::window_width,
                                           render::layout::window_height,
@@ -73,6 +77,7 @@ int main(int argc, char** argv)
     if (window == nullptr)
     {
         std::cerr << "SDL_CreateWindow: " << SDL_GetError() << "\n";
+        font::shutdown();
         SDL_Quit();
         return EXIT_FAILURE;
     }
@@ -82,6 +87,7 @@ int main(int argc, char** argv)
     {
         std::cerr << "SDL_CreateRenderer: " << SDL_GetError() << "\n";
         SDL_DestroyWindow(window);
+        font::shutdown();
         SDL_Quit();
         return EXIT_FAILURE;
     }
@@ -201,6 +207,7 @@ int main(int argc, char** argv)
 
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
+    font::shutdown();
     SDL_Quit();
     return EXIT_SUCCESS;
 }

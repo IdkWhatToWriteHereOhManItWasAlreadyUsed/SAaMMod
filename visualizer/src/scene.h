@@ -41,6 +41,10 @@ namespace scene
         double time() const;
         char light_phase() const;
 
+        // Номинальное время проезда одной полосы: из него рендер считает
+        // постоянную скорость машин на дороге
+        double passage_time() const;
+
         // Все ожидающие машины в порядке прибытия, вперемешку по направлениям
         const std::vector<waiting_car>& waiting() const;
         const std::vector<moving_car>& moving() const;
