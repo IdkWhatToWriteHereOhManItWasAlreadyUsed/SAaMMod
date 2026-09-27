@@ -50,7 +50,7 @@ namespace agents
     {
         auto self = shared_from_this();
 
-        if (!road_.is_free())
+        if (!road_.is_free() || light_.phase() != direction_)
         {
             // места нет — возвращаемся в начало очереди
             road_.push_front(direction_, self);
