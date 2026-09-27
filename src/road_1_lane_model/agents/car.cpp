@@ -1,4 +1,6 @@
 #include "car.h"
+
+#include <iostream>
 #include "road_1_lane_model/resources/road_segment.h"
 #include "road_1_lane_model/agents/traffic_light.h"
 
@@ -25,6 +27,8 @@ namespace agents
     void car::arrive(runner::i_run& run)
     {
         arrival_time_ = run.model_time();
+        std::cout << arrival_time_ << ": car " << id_ << " arrived to " << direction_ << std::endl;
+
         auto self = shared_from_this();
 
         if (light_.phase() == direction_) // зелёный в нужном направлении — заезжаем
@@ -54,7 +58,9 @@ namespace agents
             return;
         }
 
+        // стартуем
         drive_start_time_ = run.model_time();
+        std::cout << drive_start_time_ << ": car " << id_ << " started moving from " << direction_ << std::endl;
         road_.enter();
 
         run.move_active_event
@@ -78,6 +84,7 @@ namespace agents
     void car::finish_driving(runner::i_run& run)
     {
         departure_time_ = run.model_time();
+        std::cout << departure_time_ << ": car " << id_ << " left from " << direction_ << std::endl;
         road_.exit();
 
         // сразу будим следующего — место освободилось

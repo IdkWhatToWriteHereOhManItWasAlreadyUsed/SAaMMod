@@ -23,6 +23,14 @@ namespace agents
     void car_generator::spawn_car(runner::i_run& run)
     {
         static int next_id = 0;
+
+        auto self = shared_from_this();
+        run.move_active_event
+        (
+            rng_.exponential(frequency_),
+            [self](runner::i_run& r) { self->spawn_car(r); }
+        );
+
         auto car = std::make_shared<agents::car>(next_id++, direction_, road_, traffic_light_);
 
         run.new_event
@@ -30,13 +38,6 @@ namespace agents
             car,
             [car](runner::i_run& r) { car->arrive(r); },
             run.model_time()
-        );
-
-        auto self = shared_from_this();
-        run.move_active_event
-        (
-            rng_.exponential(frequency_),
-            [self](runner::i_run& r) { self->spawn_car(r); }
         );
     }
 }

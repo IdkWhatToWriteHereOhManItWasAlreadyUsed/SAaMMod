@@ -32,7 +32,10 @@ namespace resources
         --cars_on_segment_;
     }
 
-    int road_segment::capacity() const { return capacity_; }
+    int road_segment::capacity() const
+    {
+        return capacity_;
+    }
 
     void road_segment::push(char direction, std::shared_ptr<agents::car> car)
     {

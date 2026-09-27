@@ -10,7 +10,7 @@ namespace agents
         : road_(road)
         , t_green_(t_green)
         , t_red_(t_red)
-        , phase_('A')
+        , phase_('N')
     {
     }
 
@@ -20,15 +20,15 @@ namespace agents
 
     void traffic_light::switch_to(runner::i_run& run, char direction)
     {
-        phase_ = direction;
-        wake_up_queue(run, direction);
-
         auto self = shared_from_this();
         run.move_active_event
         (
             t_green_,
             [self](runner::i_run& r) { self->switch_to_none(r); }
         );
+
+        phase_ = direction;
+        wake_up_queue(run, direction);
     }
 
     void traffic_light::switch_to_none(runner::i_run& run)

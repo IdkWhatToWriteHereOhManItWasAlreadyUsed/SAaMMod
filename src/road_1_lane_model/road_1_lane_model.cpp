@@ -71,6 +71,7 @@ void road_1_lane_model::reset(runner::i_run& run)
 
 void road_1_lane_model::stop(runner::i_run& run)
 {
+    run.delete_event(traffic_light_);
     run.delete_event(car_generator_a_);
     run.delete_event(car_generator_b_);
 }

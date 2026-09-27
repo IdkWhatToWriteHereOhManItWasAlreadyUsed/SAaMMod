@@ -102,6 +102,6 @@ namespace runner
 
     void run_base::insert_event(const event& e)
     {
-        events_.insert(std::lower_bound(events_.begin(), events_.end(), e), e);
+        events_.insert(std::upper_bound(events_.begin(), events_.end(), e), e);
     }
 }
