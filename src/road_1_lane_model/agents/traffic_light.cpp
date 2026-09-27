@@ -1,4 +1,7 @@
 #include "traffic_light.h"
+
+#include <iostream>
+
 #include "road_1_lane_model/resources/road_segment.h"
 #include "road_1_lane_model/agents/car.h"
 
@@ -29,6 +32,8 @@ namespace agents
 
         phase_ = direction;
         wake_up_queue(run, direction);
+
+        std::cout << "traffic light is now " << phase_ << std::endl;
     }
 
     void traffic_light::switch_to_none(runner::i_run& run)
@@ -44,6 +49,8 @@ namespace agents
             t_red_,
             [self, next](runner::i_run& r) { self->switch_to(r, next); }
         );
+
+        std::cout << "traffic light is now " << phase_ << std::endl;
     }
 
     void traffic_light::wake_up_queue(runner::i_run& run, char direction)
