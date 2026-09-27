@@ -7,18 +7,34 @@ set(CMAKE_CXX_STANDARD 20)
 add_subdirectory(runner)
 add_subdirectory(math)
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(JSONCPP REQUIRED jsoncpp)
 
 # основной executable
 add_executable(${PROJECT_NAME}
         src/main.cpp
+        src/road_1_lane_model/road_1_lane_model.cpp
+        src/road_1_lane_model/agents/car.cpp
+        src/road_1_lane_model/agents/car.h
+        src/road_1_lane_model/agents/car_generator.cpp
+        src/road_1_lane_model/agents/car_generator.h
+        src/road_1_lane_model/agents/traffic_light.cpp
+        src/road_1_lane_model/agents/traffic_light.h
+        src/road_1_lane_model/resources/road_segment.cpp
+        src/road_1_lane_model/resources/road_segment.h
+        src/simple_runner/simple_runner.cpp
+        src/simple_runner/simple_runner.h
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src"
+         ${JSONCPP_INCLUDE_DIRS}
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
         runner
+        math
+        ${JSONCPP_LIBRARIES}
 )
 
 # тесты

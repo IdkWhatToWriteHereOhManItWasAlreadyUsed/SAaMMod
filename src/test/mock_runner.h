@@ -22,7 +22,6 @@ namespace test
         {
             run_->run();
         }
-
     private:
         std::shared_ptr<mock_model> model_;
         std::shared_ptr<runner::run_base> run_;

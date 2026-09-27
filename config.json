@@ -1,0 +1,9 @@
+{
+  "passage_time": 10.0,
+  "cars_interval": 2.0,
+  "t_green": 5.0,
+  "t_red": 3.0,
+  "lambda_a": 2.0,
+  "lambda_b": 2.0,
+  "seed": 42
+}
