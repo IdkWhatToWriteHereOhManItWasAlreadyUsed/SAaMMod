@@ -62,11 +62,11 @@ void road_1_lane_model::reset(runner::i_run& run)
     );
 
     run.new_event
-(
-    car_generator_a_,
-    [this](runner::i_run& r) { car_generator_a_->spawn_car(r); },
-    rng_.exponential(config_.lambda_a)
-);
+    (
+        car_generator_a_,
+        [this](runner::i_run& r) { car_generator_a_->spawn_car(r); },
+        rng_.exponential(config_.lambda_a)
+    );
 }
 
 void road_1_lane_model::stop(runner::i_run& run)

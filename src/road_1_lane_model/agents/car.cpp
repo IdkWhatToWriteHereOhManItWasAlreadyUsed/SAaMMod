@@ -1,6 +1,6 @@
 #include "car.h"
 
-#include <iostream>
+#include "logger.h"
 #include "road_1_lane_model/resources/road_segment.h"
 #include "road_1_lane_model/agents/traffic_light.h"
 
@@ -27,7 +27,7 @@ namespace agents
     void car::arrive(runner::i_run& run)
     {
         arrival_time_ = run.model_time();
-        std::cout << arrival_time_ << ": car " << id_ << " arrived to " << direction_ << std::endl;
+        logging::logger::instance().write_car(arrival_time_, id_, "arrive", direction_);
 
         auto self = shared_from_this();
 
@@ -61,7 +61,7 @@ namespace agents
 
         // стартуем
         drive_start_time_ = run.model_time();
-        std::cout << drive_start_time_ << ": car " << id_ << " started moving from " << direction_ << std::endl;
+        logging::logger::instance().write_car(drive_start_time_, id_, "start_driving", direction_);
         road_.enter();
 
         run.move_active_event
@@ -85,7 +85,7 @@ namespace agents
     void car::finish_driving(runner::i_run& run)
     {
         departure_time_ = run.model_time();
-        std::cout << departure_time_ << ": car " << id_ << " left from " << direction_ << std::endl;
+        logging::logger::instance().write_car(departure_time_, id_, "finish_driving", direction_);
         road_.exit();
 
         // сразу будим следующего — место освободилось

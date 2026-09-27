@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD 20)
 # подмодули
 add_subdirectory(runner)
 add_subdirectory(math)
+add_subdirectory(logging)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(JSONCPP REQUIRED jsoncpp)
@@ -34,6 +35,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 target_link_libraries(${PROJECT_NAME} PRIVATE
         runner
         math
+        logging
         ${JSONCPP_LIBRARIES}
 )
 
