@@ -34,7 +34,10 @@ namespace agents
 
         auto self = shared_from_this();
 
-        if (light_.phase() == direction_) // зелёный в нужном направлении — заезжаем
+        // Зелёный и перед участком никого нет — можно пробовать въехать сразу.
+        // Если в очереди уже кто-то стоит, машина встаёт в конец, чтобы не
+        // обгонять ждущих с красного (иначе нарушается FIFO).
+        if (light_.phase() == direction_ && road_.queue_empty(direction_))
         {
             run.next_active_event
             (
@@ -42,7 +45,7 @@ namespace agents
                 self
             );
         }
-        else // красный — в очередь
+        else // красный или в очереди есть кто-то раньше — в очередь
         {
             road_.push(direction_, self);
             run.delete_active_event();
@@ -72,6 +75,22 @@ namespace agents
         // если ближайшая машина слишком близко
         if (auto interval = drive_start_time_ - road_.last_car_enter_time(); interval < road_.cars_interval())
         {
+            // Единственная машина перед участком и гэп ещё не набежал: ждём
+            // до last_enter + cars_interval, продолжая считаться в очереди
+            // (detach), вместо того чтобы падать в начало очереди, где её
+            // могли бы обогнать новички с зелёного. Если за ней есть очередь,
+            // её разбудят обычным путём — при ближайшем заезде/выезде.
+            if (road_.queue_empty(direction_))
+            {
+                road_.detach(direction_, self);
+                run.move_active_event
+                (
+                    road_.last_car_enter_time() + road_.cars_interval() - drive_start_time_,
+                    [self](runner::i_run& r) { self->start_driving(r); }
+                );
+                return;
+            }
+
             road_.push_front(direction_, self);
             run.delete_active_event();
             return;
