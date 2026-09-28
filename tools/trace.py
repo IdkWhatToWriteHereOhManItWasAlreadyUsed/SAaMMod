@@ -22,6 +22,8 @@ CSV_FIELDS = (
     "max_queue_b",
     "passage",
     "avg_passage",
+    "wait",
+    "avg_wait",
 )
 
 KNOWN_FIELDS = set(CSV_FIELDS)
@@ -156,6 +158,8 @@ def read_csv(path: Path) -> tuple[list[Run], list[str]]:
             warnings.append(f"{path.name}[{run.replication}]: нет колонок максимума очереди")
         if not (run.has("avg_passage") and run.has("passage")):
             warnings.append(f"{path.name}[{run.replication}]: нет колонок времени прохождения")
+        if not (run.has("avg_wait") and run.has("wait")):
+            warnings.append(f"{path.name}[{run.replication}]: нет колонок времени ожидания в очереди")
 
     return runs, warnings
 
@@ -235,6 +239,25 @@ def _runs_from_events(events: list[Event], source: str) -> tuple[list[Run], list
         else:
             columns["avg_passage"] = np.zeros_like(times)
             columns["passage"] = np.zeros_like(times)
+
+        enters = []
+        waits = []
+        for time, action, _letter, car_id in block:
+            if action == "enter" and car_id in arrived_at:
+                enters.append(time)
+                waits.append(time - arrived_at[car_id])
+        if enters:
+            enters = np.array(enters, dtype=float)
+            waits = np.array(waits, dtype=float)
+            cumulated = np.cumsum(waits)
+            counts = np.arange(1, waits.size + 1, dtype=float)
+            last_index = np.searchsorted(enters, times, side="right") - 1
+            safe = np.clip(last_index, 0, cumulated.size - 1)
+            columns["avg_wait"] = np.where(last_index >= 0, cumulated[safe] / counts[safe], 0.0)
+            columns["wait"] = np.where(last_index >= 0, waits[safe], 0.0)
+        else:
+            columns["avg_wait"] = np.zeros_like(times)
+            columns["wait"] = np.zeros_like(times)
 
         runs.append(Run(source=source, replication=str(index), times=times, columns=columns))
 

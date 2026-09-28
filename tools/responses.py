@@ -20,7 +20,6 @@ class Response:
     kind: str
     final_column: str
     step: bool = True
-    scatter: bool = False
 
 
 RESPONSES: tuple[Response, ...] = (
@@ -89,7 +88,17 @@ RESPONSES: tuple[Response, ...] = (
         kind="дискретный",
         final_column="avg_passage",
         step=False,
-        scatter=True,
+    ),
+    Response(
+        key="avg_wait",
+        title="Среднее время ожидания в очереди",
+        value="wait",
+        mean="avg_wait",
+        ylabel="Время ожидания",
+        color="#17becf",
+        kind="дискретный",
+        final_column="avg_wait",
+        step=False,
     ),
 )
 
@@ -102,6 +111,7 @@ TABLE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("max_queue_a", "Макс. очередь A", "максимальная длина очереди A"),
     ("max_queue_b", "Макс. очередь B", "максимальная длина очереди B"),
     ("avg_passage", "Среднее время прохождения", "среднее время прохождения участка"),
+    ("avg_wait", "Среднее время ожидания в очереди", "среднее время ожидания в очереди"),
 )
 
 MAX_RESPONSE_ROWS = 30

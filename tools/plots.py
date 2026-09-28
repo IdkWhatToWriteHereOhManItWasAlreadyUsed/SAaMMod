@@ -47,6 +47,7 @@ def plot_dynamics(
     single = len(runs) == 1
     shown = _subsample(runs, 1 if single else max_series)
     style = "steps-post" if response.step else "default"
+    scatter = response.kind == "дискретный"
 
     fig, ax = plt.subplots(figsize=FIGURE_SIZE, dpi=dpi)
     value_label = "текущее значение отклика"
@@ -55,7 +56,7 @@ def plot_dynamics(
     drawn_mean = False
     for run in shown:
         if run.has(response.value):
-            if response.scatter:
+            if scatter:
                 ax.scatter(
                     run.times,
                     run.columns[response.value],

@@ -95,6 +95,9 @@ namespace agents
             return;
         }
 
+        // время ожидания в очереди — от прихода до начала движения
+        logging::stats_logger::instance().car_waited(drive_start_time_ - arrival_time_);
+
         logging::logger::instance().write_car(drive_start_time_, id_, "enter", direction_);
         road_.enter(drive_start_time_);
 
