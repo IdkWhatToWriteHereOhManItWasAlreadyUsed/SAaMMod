@@ -35,8 +35,6 @@ namespace agents
         auto self = shared_from_this();
 
         // Зелёный и перед участком никого нет — можно пробовать въехать сразу.
-        // Если в очереди уже кто-то стоит, машина встаёт в конец, чтобы не
-        // обгонять ждущих с красного (иначе нарушается FIFO).
         if (light_.phase() == direction_ && road_.queue_empty(direction_))
         {
             run.next_active_event
@@ -45,8 +43,9 @@ namespace agents
                 self
             );
         }
-        else // красный или в очереди есть кто-то раньше — в очередь
+        else // красный или в очереди есть кто-то раньше — в конец очереди
         {
+
             road_.push(direction_, self);
             run.delete_active_event();
         }
