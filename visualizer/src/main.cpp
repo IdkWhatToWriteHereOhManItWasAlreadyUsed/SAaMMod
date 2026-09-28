@@ -30,7 +30,7 @@ namespace
 
 int main(int argc, char** argv)
 {
-    const std::string path = "/home/dmitry/CLionProjects/SAiMMOD_Lab2/lab2/Lab2_Code/logs/road_1_lane.jsonl";//argv[1];
+    const std::string path = "/home/dmitry/CLionProjects/SAaMMod/logs/road_1_lane.jsonl";//argv[1];
 
     double speed = default_speed;
     if (argc >= 3)

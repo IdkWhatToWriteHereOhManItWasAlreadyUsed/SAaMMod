@@ -8,7 +8,7 @@ int main(int argc, char** argv)
     logger.start("../logs/road_1_lane.jsonl");
 
     const auto model = std::make_shared<road_1_lane_model>(
-        road_1_lane_model::config("/home/dmitry/CLionProjects/SAiMMOD_Lab2/lab2/Lab2_Code/config.json"));
+        road_1_lane_model::config("/home/dmitry/CLionProjects/SAaMMod/config.json"));
     simple_runner runner(model, 1000.0);
     runner.simulate();
 
