@@ -3,7 +3,6 @@ project(Lab2_Code)
 
 set(CMAKE_CXX_STANDARD 20)
 
-# подмодули
 add_subdirectory(runner)
 add_subdirectory(math)
 add_subdirectory(logging)
@@ -12,7 +11,6 @@ add_subdirectory(visualizer)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(JSONCPP REQUIRED jsoncpp)
 
-# основной executable
 add_executable(${PROJECT_NAME}
         src/main.cpp
         src/road_1_lane_model/road_1_lane_model.cpp
@@ -40,7 +38,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         ${JSONCPP_LIBRARIES}
 )
 
-# тесты
 enable_testing()
 
 add_executable(test_mock
