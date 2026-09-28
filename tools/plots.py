@@ -55,15 +55,27 @@ def plot_dynamics(
     drawn_mean = False
     for run in shown:
         if run.has(response.value):
-            ax.plot(
-                run.times,
-                run.columns[response.value],
-                drawstyle=style,
-                linewidth=1.0 if single else 0.7,
-                alpha=0.85 if single else 0.30,
-                color=response.color,
-                label=value_label if not drawn_value else "_nolegend_",
-            )
+            if response.scatter:
+                ax.scatter(
+                    run.times,
+                    run.columns[response.value],
+                    s=8,
+                    linewidths=0,
+                    alpha=0.85 if single else 0.30,
+                    color=response.color,
+                    marker="o",
+                    label=value_label if not drawn_value else "_nolegend_",
+                )
+            else:
+                ax.plot(
+                    run.times,
+                    run.columns[response.value],
+                    drawstyle=style,
+                    linewidth=1.0 if single else 0.7,
+                    alpha=0.85 if single else 0.30,
+                    color=response.color,
+                    label=value_label if not drawn_value else "_nolegend_",
+                )
             drawn_value = True
         if response.mean and run.has(response.mean):
             ax.plot(

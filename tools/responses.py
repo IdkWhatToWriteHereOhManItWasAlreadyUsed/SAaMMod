@@ -20,6 +20,7 @@ class Response:
     kind: str
     final_column: str
     step: bool = True
+    scatter: bool = False
 
 
 RESPONSES: tuple[Response, ...] = (
@@ -88,6 +89,7 @@ RESPONSES: tuple[Response, ...] = (
         kind="дискретный",
         final_column="avg_passage",
         step=False,
+        scatter=True,
     ),
 )
 
