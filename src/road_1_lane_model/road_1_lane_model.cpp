@@ -5,6 +5,8 @@
 #include <iostream>
 #include <json/json.h>
 
+#include "stats_logger.h"
+
 road_1_lane_model::config::config(const std::string& path)
 {
     std::ifstream file(path);
@@ -47,6 +49,9 @@ road_1_lane_model::road_1_lane_model(const config& cfg)
 
 void road_1_lane_model::reset(runner::i_run& run)
 {
+    road_segment_.reset();
+    logging::stats_logger::instance().begin_run(run.model_time());
+
     run.new_event
     (
         traffic_light_,
@@ -74,4 +79,14 @@ void road_1_lane_model::stop(runner::i_run& run)
     run.delete_event(traffic_light_);
     run.delete_event(car_generator_a_);
     run.delete_event(car_generator_b_);
+}
+
+void road_1_lane_model::sample(runner::i_run& run)
+{
+    logging::stats_logger::instance().sample
+    (
+        run.model_time(),
+        road_segment_.queue_size('A'),
+        road_segment_.queue_size('B')
+    );
 }

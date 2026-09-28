@@ -29,6 +29,7 @@ public:
 
     void reset(runner::i_run& run) override;
     void stop(runner::i_run& run) override;
+    void sample(runner::i_run& run) override;
 private:
     config config_;
 

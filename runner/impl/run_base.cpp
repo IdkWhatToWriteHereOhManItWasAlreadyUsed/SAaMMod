@@ -11,11 +11,13 @@ namespace runner
         model_time_ = 0;
         model_->reset(*this);
         is_halted_ = false;
+        model_->sample(*this);
 
         while (!end_of_run())
         {
             model_time_ = next_time(events_[0].time);
             events_[0].handler(*this);
+            model_->sample(*this);
         }
     }
 

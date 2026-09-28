@@ -1,6 +1,7 @@
 #include "car.h"
 
 #include "logger.h"
+#include "stats_logger.h"
 #include "road_1_lane_model/resources/road_segment.h"
 #include "road_1_lane_model/agents/traffic_light.h"
 
@@ -23,6 +24,8 @@ namespace agents
     double_t car::arrival_time() const { return arrival_time_; }
     double_t car::drive_start_time() const { return drive_start_time_; }
     double_t car::departure_time() const { return departure_time_; }
+    bool car::is_waiting_slot() const { return waiting_slot_; }
+    void car::set_waiting_slot(const bool value) { waiting_slot_ = value; }
 
     void car::arrive(runner::i_run& run)
     {
@@ -49,6 +52,10 @@ namespace agents
     void car::start_driving(runner::i_run& run)
     {
         auto self = shared_from_this();
+
+        // Машина дождалась своей очереди на въезд: с этого момента она либо
+        // на участке, либо снова в очереди — учитываем её как обычную машину
+        road_.attach(direction_, self);
 
         // чел спереди поехал, но после него мог успеть красный загореться
         if (!road_.is_free() || light_.phase() != direction_)
@@ -83,6 +90,9 @@ namespace agents
         auto next = road_.pop(direction_);
         if (!next) { return; }
 
+        // из очереди он вынут, но в неё же вернётся, если не сможет въехать
+        road_.detach(direction_, next);
+
         run.new_event
         (
             next,
@@ -95,6 +105,7 @@ namespace agents
     {
         departure_time_ = run.model_time();
         logging::logger::instance().write_car(departure_time_, id_, "leave", direction_);
+        logging::stats_logger::instance().car_passed(departure_time_ - arrival_time_);
         road_.exit();
 
         // сразу будим следующего — место освободилось

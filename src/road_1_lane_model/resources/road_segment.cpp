@@ -13,6 +13,8 @@ namespace resources
     void road_segment::reset()
     {
         cars_on_segment_ = 0;
+        waiting_slot_a_ = 0;
+        waiting_slot_b_ = 0;
         queue_a_.clear();
         queue_b_.clear();
     }
@@ -65,14 +67,38 @@ namespace resources
         return car;
     }
 
+    void road_segment::detach(const char direction, const std::shared_ptr<agents::car>& car)
+    {
+        if (car)
+        {
+            car->set_waiting_slot(true);
+        }
+        if (direction == 'A') { ++waiting_slot_a_; } else { ++waiting_slot_b_; }
+    }
+
+    void road_segment::attach(const char direction, const std::shared_ptr<agents::car>& car)
+    {
+        if (!car || !car->is_waiting_slot())
+        {
+            return;
+        }
+        car->set_waiting_slot(false);
+        if (direction == 'A')
+        {
+            if (waiting_slot_a_ > 0) { --waiting_slot_a_; }
+        }
+        else if (waiting_slot_b_ > 0) { --waiting_slot_b_; }
+    }
+
     bool road_segment::queue_empty(char direction) const
     {
-        return queue(direction).empty();
+        return queue_size(direction) == 0;
     }
 
     std::size_t road_segment::queue_size(char direction) const
     {
-        return queue(direction).size();
+        const std::size_t waiting = (direction == 'A') ? waiting_slot_a_ : waiting_slot_b_;
+        return queue(direction).size() + waiting;
     }
 
     std::vector<std::shared_ptr<agents::car>>& road_segment::queue(char direction)

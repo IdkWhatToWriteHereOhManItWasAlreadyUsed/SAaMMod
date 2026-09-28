@@ -31,6 +31,12 @@ namespace agents
         double_t drive_start_time() const;
         double_t departure_time() const;
 
+        // Машину вывели из очереди, чтобы она въехала через cars_interval.
+        // Формально она всё ещё стоит в очереди, поэтому длина очереди её
+        // учитывает, пока флаг не снят в начале start_driving().
+        bool is_waiting_slot() const;
+        void set_waiting_slot(bool value);
+
     private:
         int id_;
         char direction_;
@@ -40,5 +46,6 @@ namespace agents
         double_t arrival_time_ = 0;
         double_t drive_start_time_ = 0;
         double_t departure_time_ = 0;
+        bool waiting_slot_ = false;
     };
 }

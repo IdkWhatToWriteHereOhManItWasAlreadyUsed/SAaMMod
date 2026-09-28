@@ -9,10 +9,12 @@ pkg_check_modules(JSONCPP REQUIRED jsoncpp)
 add_library(${PROJECT_NAME}
         # .cpp
         logger.cpp
+        stats_logger.cpp
         # headers (для IDE)
         record.cpp
         record.h
         logger.h
+        stats_logger.h
 )
 
 # logger.h публично тянет <json/json.h>, поэтому include-директории jsoncpp
