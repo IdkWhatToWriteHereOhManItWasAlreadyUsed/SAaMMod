@@ -19,7 +19,7 @@ namespace math
 
         // умножение state_*a требует 64 бит — в 32-битном unsigned оно
         // переполнялось, и генератор схлопывался в короткий цикл
-        state_ = static_cast<unsigned>((static_cast<std::uint64_t>(state_) * a) % 1000);
+        state_ = static_cast<unsigned>((static_cast<std::uint64_t>(state_) * a) % m);
         return std::abs(static_cast<double>(state_));
     }
 

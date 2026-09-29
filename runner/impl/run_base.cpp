@@ -94,7 +94,7 @@ namespace runner
 
     bool run_base::is_empty()
     {
-        return events_.empty();
+        return true;
     }
 
     double_t run_base::next_time(const double_t base_time)

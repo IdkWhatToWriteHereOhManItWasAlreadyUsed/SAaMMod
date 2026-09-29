@@ -132,7 +132,7 @@ int main()
             const std::string label = std::string("09_intensity_") + label_text;
 
             const road_1_lane_model::config base_cfg(
-                30.0, 1.0, 35.0, 50.0, lambda, lambda,
+                30.0, 2.0, 35.0, 50.0, lambda, lambda,
                 static_cast<unsigned>(rand()));
 
             run_repeated(base_cfg,
