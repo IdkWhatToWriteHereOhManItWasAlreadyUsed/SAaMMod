@@ -118,7 +118,7 @@ int main()
 
     {
         const double_t lambda_min = 0.10;
-        const double_t lambda_max = 0.40;
+        const double_t lambda_max = 0.60;
         const double_t lambda_step = 0.05;
         const int reps = 8;
         int level = 0;
@@ -133,7 +133,7 @@ int main()
 
             const road_1_lane_model::config base_cfg(
                 30.0, 1.0, 35.0, 50.0, lambda, lambda,
-                109890u + static_cast<unsigned>(level) * 7765u);
+                static_cast<unsigned>(7777u));
 
             run_repeated(base_cfg,
                          out_intensity + label,
