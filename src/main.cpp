@@ -117,8 +117,8 @@ int main()
     const std::string out_intensity = out + "09_intensity/";
 
     {
-        const double_t lambda_min = 0.10;
-        const double_t lambda_max = 0.60;
+        const double_t lambda_min = 0.30;
+        const double_t lambda_max = 1.50;
         const double_t lambda_step = 0.05;
         const int reps = 8;
         int level = 0;
@@ -132,7 +132,7 @@ int main()
             const std::string label = std::string("09_intensity_") + label_text;
 
             const road_1_lane_model::config base_cfg(
-                30.0, 2.0, 35.0, 50.0, lambda, lambda,
+                30.0, 4.0, 35.0, 50.0, lambda, lambda,
                 static_cast<unsigned>(level * 777));
 
             run_repeated(base_cfg,
