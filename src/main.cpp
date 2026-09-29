@@ -10,7 +10,7 @@
 
 namespace
 {
-    const double_t RUN_TIME = 1200.0;
+    constexpr double_t RUN_TIME = 1200.0;
 
     void analyze(const std::string& csv,
                  const std::string& charts,
@@ -133,7 +133,7 @@ int main()
 
             const road_1_lane_model::config base_cfg(
                 30.0, 1.0, 35.0, 50.0, lambda, lambda,
-                static_cast<unsigned>(7777u));
+                static_cast<unsigned>(rand()));
 
             run_repeated(base_cfg,
                          out_intensity + label,

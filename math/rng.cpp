@@ -2,6 +2,8 @@
 
 #include <cmath>
 #include <cstdint>
+#include <random>
+#include <bits/this_thread_sleep.h>
 
 namespace math
 {
@@ -17,8 +19,8 @@ namespace math
 
         // умножение state_*a требует 64 бит — в 32-битном unsigned оно
         // переполнялось, и генератор схлопывался в короткий цикл
-        state_ = static_cast<unsigned>((static_cast<std::uint64_t>(state_) * a) % m);
-        return std::abs(static_cast<double>(state_) / static_cast<double>(m));
+        state_ = static_cast<unsigned>((static_cast<std::uint64_t>(state_) * a) % 1000);
+        return std::abs(static_cast<double>(state_));
     }
 
     double rng::uniform(double a, double b)
