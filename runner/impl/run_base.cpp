@@ -19,6 +19,12 @@ namespace runner
             events_[0].handler(*this);
             model_->sample(*this);
         }
+
+        // Финальный замер ровно на run_time: окно наблюдения [0, run_time]
+        // закрывается целиком, поэтому метрики усредняются по нему, а не по
+        // времени последнего события (оно всегда < run_time).
+        model_time_ = run_time_;
+        model_->sample(*this);
     }
 
     double_t run_base::model_time() const
@@ -81,9 +87,23 @@ namespace runner
 
     bool run_base::end_of_run()
     {
-        if (!is_empty() && is_active()) return false;
-        if (!is_halted_) { model_->stop(*this); is_halted_ = true; }
-        if (!is_empty()) return false;
+        // События за пределами окна [0, run_time) не начинаем: модель
+        // заканчивается ровно на run_time, хвост очереди не доезжает и не
+        // попадает в passed. Иначе "дренаж" продолжал бы крутить остаток
+        // очереди и завышал passed на величину накопленного бэклога.
+        if (!is_empty() && is_active() && events_[0].time < run_time_)
+        {
+            return false;
+        }
+
+        if (!is_halted_)
+        {
+            model_->stop(*this);
+            is_halted_ = true;
+        }
+
+        // Сбросить остаток событий вместо дренирования.
+        events_.clear();
         return true;
     }
 
@@ -94,7 +114,7 @@ namespace runner
 
     bool run_base::is_empty()
     {
-        return true;
+        return events_.empty();
     }
 
     double_t run_base::next_time(const double_t base_time)
