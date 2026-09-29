@@ -16,6 +16,23 @@ public:
     {
         explicit config(const std::string& path);
 
+        config(double_t passage_time,
+               double_t cars_interval,
+               double_t t_green,
+               double_t t_red,
+               double_t lambda_a,
+               double_t lambda_b,
+               unsigned seed)
+            : passage_time(passage_time)
+            , cars_interval(cars_interval)
+            , t_green(t_green)
+            , t_red(t_red)
+            , lambda_a(lambda_a)
+            , lambda_b(lambda_b)
+            , seed(seed)
+        {
+        }
+
         double_t passage_time;
         double_t cars_interval;
         double_t t_green;
