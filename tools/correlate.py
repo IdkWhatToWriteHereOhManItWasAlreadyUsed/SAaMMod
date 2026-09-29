@@ -140,10 +140,6 @@ def main(argv: list[str] | None = None) -> int:
             ax.scatter(levels_mean_x, levels_mean_y, marker="o", s=70,
                        color=response.color, edgecolors="black", linewidth=0.8,
                        label="среднее по уровню")
-            domain = np.linspace(lambdas.min(), lambdas.max(), 64)
-            ax.plot(domain, slope * domain + intercept, color="#111111",
-                    linestyle="--", linewidth=1.6,
-                    label=f"линейная подгонка: {slope:+.3g}·λ{intercept:+.3g}")
             suffix = f" — {args.label}" if args.label else ""
             ax.set_title(f"{response.title}{suffix} (r = {r:.3f}, p = {p:.3g})",
                          fontsize=13, pad=12)
