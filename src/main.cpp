@@ -1,10 +1,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <string>
-#include <vector>
 
-#include "logger.h"
 #include "stats_logger.h"
 #include "road_1_lane_model/road_1_lane_model.h"
 #include "simple_runner/simple_runner.h"
@@ -12,164 +11,81 @@
 namespace
 {
     constexpr double_t RUN_TIME = 1200.0;
+    const std::string CFG_DIR = "../custom_configs/";
+    const std::string OUT_DIR = "../results/";
 
-    void analyze(const std::string& csv,
-                 const std::string& charts,
-                 const std::string& label)
+    void run_lab3_pack(const std::string& config_path,
+                       const std::string& out_prefix,
+                       const int count,
+                       const double_t run_time)
     {
-        const std::string command = std::string("python3 ../tools/analyze.py ") + csv
-                                    + " --out " + charts + " --label " + label;
-        std::system(command.c_str());
-    }
-
-    void correlate(const std::vector<std::string>& csvs,
-                   const std::vector<double_t>& lambdas,
-                   const std::string& out_dir,
-                   const std::string& label)
-    {
-        std::string files;
-        for (const auto& csv : csvs)
-        {
-            if (!files.empty()) { files += " "; }
-            files += csv;
-        }
-
-        std::string lambda_list;
-        for (const auto lambda : lambdas)
-        {
-            if (!lambda_list.empty()) { lambda_list += ","; }
-            char text[32];
-            std::snprintf(text, sizeof(text), "%.10g", lambda);
-            lambda_list += text;
-        }
-
-        const std::string command = std::string("python3 ../tools/correlate.py ") + files
-                                    + " --lambdas " + lambda_list
-                                    + " --out " + out_dir + " --label " + label;
-        std::system(command.c_str());
-    }
-
-    // Один прогон: свои csv, jsonl и папка графиков.
-    void run_once(const std::string& config,
-                  const std::string& jsonl,
-                  const std::string& csv,
-                  const std::string& charts,
-                  const std::string& label)
-    {
-        auto& logger = logging::logger::instance();
         auto& stats = logging::stats_logger::instance();
 
-        logger.start(jsonl);
-        stats.start(csv, 1);
+        stats.summary_start(out_prefix + "_summary.csv");
 
-        const auto model = std::make_shared<road_1_lane_model>(
-            road_1_lane_model::config(config));
-        simple_runner runner(model, RUN_TIME);
-        runner.simulate();
-
-        stats.close();
-        logger.close();
-
-        analyze(csv, charts, label);
-    }
-
-    void run_repeated(const road_1_lane_model::config& base_cfg,
-                      const std::string& jsonl_dir,
-                      const std::string& csv,
-                      const std::string& charts,
-                      const std::string& label,
-                      const int count,
-                      const bool draw_charts = true)
-    {
-       // auto& logger = logging::logger::instance();
-      //  auto& stats = logging::stats_logger::instance();
-
-       // stats.start(csv, 1);
+        const road_1_lane_model::config base_cfg(config_path);
 
         for (int rep = 1; rep <= count; ++rep)
         {
-          //  logger.start(jsonl_dir + "_" + std::to_string(rep) + ".jsonl");
-
             auto cfg = base_cfg;
-           // cfg.seed += rep - 1;
+            cfg.seed = base_cfg.seed + static_cast<unsigned>(rep - 1);
 
-            const auto model = std::make_shared<road_1_lane_model>(cfg);
-            simple_runner runner(model, RUN_TIME);
-          //  stats.set_replication(rep);
+            stats.begin_run(0.0);
+
+            auto model = std::make_shared<road_1_lane_model>(cfg);
+            simple_runner runner(model, run_time);
             runner.simulate();
 
-        //    logger.close();
+            stats.write_replication(rep, cfg.seed, run_time);
         }
 
-       // stats.close();
+        stats.summary_close();
+    }
 
-        if (draw_charts)
-        {
-      //      analyze(csv, charts, label);
-        }
+    void run_lab3_precision(const std::string& config_path,
+                            const std::string& out_dir)
+    {
+        (void)config_path; (void)out_dir;
+    }
+
+    void run_lab3_transient(const std::string& config_path,
+                            const std::string& out_dir,
+                            const double_t long_run_time,
+                            const int repl)
+    {
+        (void)config_path; (void)out_dir; (void)long_run_time; (void)repl;
+    }
+
+    void run_lab3_continuous(const std::string& config_path,
+                             const std::string& out_dir,
+                             const double_t run_time,
+                             const int repl)
+    {
+        (void)config_path; (void)out_dir; (void)run_time; (void)repl;
+    }
+
+    void run_lab3_sensitivity(const std::string& config_path,
+                              const std::string& out_dir,
+                              const double_t x0,
+                              const double_t delta,
+                              const int reps_per_point)
+    {
+        (void)config_path; (void)out_dir; (void)x0; (void)delta; (void)reps_per_point;
     }
 }
 
 int main()
 {
-    const std::string cfg = "../custom_configs/";
-    const std::string out = "../results/";
+    const std::string base_cfg = CFG_DIR + "lab3_base.json";
+    const std::string base_out = OUT_DIR + "lab3_base";
 
-    {
-        const std::string out_intensity = out + "09_intensity/";
-        const int reps = 1;
-        int level = 0;
+    //run_lab3_pack(base_cfg, base_out + "_n180", 180, RUN_TIME);
+    run_lab3_pack(base_cfg, base_out + "_n20",  20,  RUN_TIME);
 
-        std::vector<std::string> csvs;
-        std::vector<double_t> lambdas;
-
-        const road_1_lane_model::config base_cfg(cfg + "20_reps_overload.json");
-
-        for (int seed = 0; seed <= 100000; seed += 20)
-        {
-            char label_text[32];
-            std::snprintf(label_text, sizeof(label_text), "%.2d", seed);
-            const std::string label = std::string("09_intensity_") + label_text;
-
-            base_cfg.seed = seed;
-            std::cout << seed << '\n';
-            run_repeated(base_cfg,
-                         out_intensity + label,
-                         out_intensity + label + ".csv",
-                         "", label, reps, false);
-
-          //  csvs.push_back(out_intensity + label + ".csv");
-           // lambdas.push_back(lambda);
-            ++level;
-        }
-
-        //correlate(csvs, lambdas, out_intensity + "correlations", "09_intensity");
-    }
-/*
-    run_once(cfg + "06_a_heavy.json",      out + "06_a_heavy.jsonl",
-             out + "06_a_heavy.csv",       out + "06_a_heavy_charts",
-             "06_a_heavy");
-*/
-
-
-    /*
-    run_once(cfg + "07_b_heavy.json",      out + "07_b_heavy.jsonl",
-             out + "07_b_heavy.csv",       out + "07_b_heavy_charts",
-             "07_b_heavy");
-    run_once(cfg + "08_short_green.json",  out + "08_short_green.jsonl",
-             out + "08_short_green.csv",   out + "08_short_green_charts",
-             "08_short_green");*/
-/*
-    run_repeated(road_1_lane_model::config(cfg + "10_reps_base.json"),
-                 out + "10_reps_base",
-                 out + "10_reps_base.csv",
-                 out + "10_reps_base_charts",
-                 "10_reps_base", 8);
-    run_repeated(road_1_lane_model::config(cfg + "20_reps_overload.json"),
-                 out + "20_reps_overload",
-                 out + "20_reps_overload.csv",
-                 out + "20_reps_overload_charts",
-                 "20_reps_overload", 8);*/
+    run_lab3_precision  (base_cfg, OUT_DIR + "lab3_precision");
+    run_lab3_transient  (base_cfg, OUT_DIR + "lab3_transient", 6000.0, 10);
+    run_lab3_continuous (base_cfg, OUT_DIR + "lab3_continuous", RUN_TIME, 20);
+    run_lab3_sensitivity(base_cfg, OUT_DIR + "lab3_sensitivity", 0.20, 0.02, 5);
 
     return 0;
 }

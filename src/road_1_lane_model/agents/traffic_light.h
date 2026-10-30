@@ -21,7 +21,7 @@ namespace agents
         void switch_to(runner::i_run& run, char direction);
         void switch_to_none(runner::i_run& run);
     private:
-        void wake_up_queue(runner::i_run& run, char direction);
+        void wake_up_queue(runner::i_run& run, char direction) const;
         resources::road_segment& road_;
         double_t t_green_;
         double_t t_red_;

@@ -1,5 +1,6 @@
 #include "car.h"
 
+#include <iostream>                       // ← DBG
 #include "logger.h"
 #include "stats_logger.h"
 #include "road_1_lane_model/resources/road_segment.h"
@@ -7,8 +8,8 @@
 
 namespace agents
 {
-    car::car(int id,
-             char direction,
+    car::car(const int id,
+             const char direction,
              resources::road_segment& road,
              agents::traffic_light& light)
         : id_(id)
@@ -19,7 +20,6 @@ namespace agents
     }
 
     int car::id() const { return id_; }
-
     char car::direction() const { return direction_; }
     double_t car::arrival_time() const { return arrival_time_; }
     double_t car::drive_start_time() const { return drive_start_time_; }
@@ -32,9 +32,9 @@ namespace agents
         arrival_time_ = run.model_time();
         logging::logger::instance().write_car(arrival_time_, id_, "arrive", direction_);
 
+
         auto self = shared_from_this();
 
-        // Зелёный и перед участком никого нет — можно пробовать въехать сразу.
         if (light_.phase() == direction_ && road_.queue_empty(direction_))
         {
             run.next_active_event
@@ -43,9 +43,8 @@ namespace agents
                 self
             );
         }
-        else // красный или в очереди есть кто-то раньше — в конец очереди
+        else
         {
-
             road_.push(direction_, self);
             run.delete_active_event();
         }
@@ -55,49 +54,48 @@ namespace agents
     {
         auto self = shared_from_this();
 
-        // Машина дождалась своей очереди на въезд: с этого момента она либо
-        // на участке, либо снова в очереди — учитываем её как обычную машину
         road_.attach(direction_, self);
 
-        // чел спереди поехал, но после него мог успеть красный загореться
         if (!road_.is_free() || light_.phase() != direction_)
         {
-            // места нет — возвращаемся в начало очереди
             road_.push_front(direction_, self);
             run.delete_active_event();
             return;
         }
 
-        // пытаемся стартовать
         drive_start_time_ = run.model_time();
 
-        // если ближайшая машина слишком близко
-        if (auto interval = drive_start_time_ - road_.last_car_enter_time(); interval < road_.cars_interval())
+        if (auto interval = drive_start_time_ - road_.last_car_enter_time();
+            interval < road_.cars_interval())
         {
-            // Единственная машина перед участком и гэп ещё не набежал: ждём
-            // до last_enter + cars_interval, продолжая считаться в очереди
-            // (detach), вместо того чтобы падать в начало очереди, где её
-            // могли бы обогнать новички с зелёного. Если за ней есть очередь,
-            // её разбудят обычным путём — при ближайшем заезде/выезде.
+            const double_t wait = road_.last_car_enter_time() + road_.cars_interval() - drive_start_time_;
+
             if (road_.queue_empty(direction_))
             {
-                road_.detach(direction_, self);
-                run.move_active_event
-                (
-                    road_.last_car_enter_time() + road_.cars_interval() - drive_start_time_,
-                    [self](runner::i_run& r) { self->start_driving(r); }
-                );
+                if (wait <= 1e-9)
+                {
+                }
+                else
+                {
+                    road_.detach(direction_, self);
+                    run.move_active_event
+                    (
+                        wait,
+                        [self](runner::i_run& r) { self->start_driving(r); }
+                    );
+                    return;
+                }
+            }
+            else
+            {
+                road_.push_front(direction_, self);
+                run.delete_active_event();
                 return;
             }
-
-            road_.push_front(direction_, self);
-            run.delete_active_event();
-            return;
         }
 
-        // время ожидания в очереди — от прихода до начала движения
-        logging::stats_logger::instance().car_waited(drive_start_time_ - arrival_time_);
 
+        logging::stats_logger::instance().car_waited(drive_start_time_ - arrival_time_);
         logging::logger::instance().write_car(drive_start_time_, id_, "enter", direction_);
         road_.enter(drive_start_time_);
 
@@ -107,11 +105,12 @@ namespace agents
             [self](runner::i_run& r) { self->finish_driving(r); }
         );
 
-        // будим следующего через cars_interval
         auto next = road_.pop(direction_);
-        if (!next) { return; }
+        if (!next)
+        {
+            return;
+        }
 
-        // из очереди он вынут, но в неё же вернётся, если не сможет въехать
         road_.detach(direction_, next);
 
         run.new_event
@@ -129,7 +128,7 @@ namespace agents
         logging::stats_logger::instance().car_passed(departure_time_ - arrival_time_);
         road_.exit();
 
-        // сразу будим следующего — место освободилось
+
         auto next = road_.pop(direction_);
         if (next)
         {

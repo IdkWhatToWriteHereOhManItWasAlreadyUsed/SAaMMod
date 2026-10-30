@@ -27,7 +27,7 @@ namespace agents
         auto self = shared_from_this();
         run.move_active_event
         (
-            rng_.exponential(frequency_),
+           rng_.exponential(frequency_),
             [self](runner::i_run& r) { self->spawn_car(r); }
         );
 

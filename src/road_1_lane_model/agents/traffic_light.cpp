@@ -53,7 +53,7 @@ namespace agents
         logging::logger::instance().write_light(run.model_time(), previous, phase_);
     }
 
-    void traffic_light::wake_up_queue(runner::i_run& run, char direction)
+    void traffic_light::wake_up_queue(runner::i_run& run, char direction) const
     {
         if (!road_.is_free())
         {

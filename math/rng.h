@@ -1,19 +1,20 @@
 #pragma once
-#include <cmath>
+
+#include <cstdint>
 
 namespace math
 {
     class rng
     {
     public:
-        explicit rng(unsigned seed = 0);
+        explicit rng(unsigned seed);
 
-        static double_t random();
-        static double_t uniform(double a, double b);
-        static double_t exponential(double frequency);
-        static double_t normal(double mean, double sigma);
+        double random();
+        double uniform(double a, double b);
+        double exponential(double frequency);
+        double normal(double mean, double sigma);
 
     private:
-        unsigned state_;
+        std::uint64_t s_;
     };
 }

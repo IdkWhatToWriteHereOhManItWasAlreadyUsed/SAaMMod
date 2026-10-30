@@ -1,11 +1,12 @@
 #include "public/run_base.h"
 #include <algorithm>
 #include <iostream>
+#include <utility>
 
 namespace runner
 {
     run_base::run_base(std::shared_ptr<i_model> model, const double_t run_time)
-        : run_time_(run_time), model_(model) {}
+        : run_time_(run_time), model_(std::move(model)) {}
 
     void run_base::run()
     {
@@ -19,7 +20,7 @@ namespace runner
             model_time_ = next_time(events_[0].time);
             events_[0].handler(*this);
             model_->sample(*this);
-            std::cout << model_time_ << '\n';
+            //std::cout << model_time_ << '\n';
         }
 
         // Финальный замер ровно на run_time: окно наблюдения [0, run_time]
@@ -51,7 +52,7 @@ namespace runner
         {
             events_[0].handler = handler;
         }
-        event e = events_[0];
+        const event e = events_[0];
         events_.erase(events_.begin());
         insert_event(e);
     }
@@ -75,11 +76,7 @@ namespace runner
 
     void run_base::delete_event(std::shared_ptr<i_agent> agent)
     {
-        auto it = std::find_if(
-            events_.begin(),
-            events_.end(),
-            [&](const event& e) { return e.agent == agent; }
-        );
+        auto it = std::ranges::find_if(events_, [&](const event& e) { return e.agent == agent; });
 
         if (it != events_.end())
         {

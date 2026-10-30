@@ -2,18 +2,13 @@
 
 #include <cstdio>
 #include <filesystem>
+#include <stdexcept>
 #include <string>
 
 namespace logging
 {
     namespace
     {
-        const char* const HEADER =
-            "replication,modelTime,queue_a,avg_queue_a,queue_b,avg_queue_b,"
-            "passed,max_queue_a,max_queue_b,passage,avg_passage,wait,avg_wait";
-
-        // Короткая запись double без хвоста из нулей: анализатор сам приводит
-        // значения к float, лишние разряды после 10 значащих цифр не нужны.
         std::string num(const double_t value)
         {
             char text[32];
@@ -21,10 +16,18 @@ namespace logging
             return text;
         }
 
-        // Среднее по времени: площадь, делённая на время от начала прогона.
         double_t mean_over_time(const double_t area, const double_t elapsed)
         {
             return (elapsed > 0) ? area / elapsed : 0;
+        }
+
+        void ensure_parent(const std::string& path)
+        {
+            const std::filesystem::path fp(path);
+            if (fp.has_parent_path())
+            {
+                std::filesystem::create_directories(fp.parent_path());
+            }
         }
     }
 
@@ -36,76 +39,101 @@ namespace logging
 
     stats_logger::~stats_logger()
     {
-        close();
+        summary_close();
+        interval_close();
     }
 
-    void stats_logger::start(const std::string& path, const int replication)
+    void stats_logger::summary_start(const std::string& path)
     {
-        close();
-
-        if (path.empty())
+        if (summary_file_.is_open()) { summary_file_.close(); }
+        ensure_parent(path);
+        summary_path_ = path;
+        summary_file_.open(path, std::ios::out | std::ios::trunc);
+        if (!summary_file_.is_open())
         {
-            return;
+            summary_path_.clear();
+            throw std::runtime_error("cannot open summary: " + path);
         }
+        summary_file_ << "replication,seed,Y,passed,wait_count,"
+                         "max_queue_a,max_queue_b,run_time\n";
+    }
 
-        const std::filesystem::path file_path(path);
-        if (file_path.has_parent_path())
+    void stats_logger::write_replication(int rep, unsigned seed, double_t run_time)
+    {
+        if (!summary_file_.is_open()) { return; }
+        summary_file_ << rep << ','
+                      << seed << ','
+                      << num(avg_wait()) << ','
+                      << passed_ << ','
+                      << wait_count_ << ','
+                      << num(max_queue_a_) << ','
+                      << num(max_queue_b_) << ','
+                      << num(run_time) << '\n';
+    }
+
+    void stats_logger::summary_close()
+    {
+        if (summary_file_.is_open())
         {
-            std::filesystem::create_directories(file_path.parent_path());
+            summary_file_.flush();
+            summary_file_.close();
         }
+        summary_path_.clear();
+    }
 
-        file_.open(path, std::ios::out | std::ios::trunc);
-        if (!file_.is_open())
+    bool stats_logger::summary_active() const { return summary_file_.is_open(); }
+
+    void stats_logger::interval_start(const std::string& path, double_t dt)
+    {
+        if (interval_file_.is_open()) { interval_file_.close(); }
+        if (dt <= 0) { throw std::runtime_error("interval dt must be > 0"); }
+        ensure_parent(path);
+        interval_path_ = path;
+        interval_dt_ = dt;
+        interval_file_.open(path, std::ios::out | std::ios::trunc);
+        if (!interval_file_.is_open())
         {
-            path_.clear();
-            return;
+            interval_path_.clear();
+            throw std::runtime_error("cannot open interval: " + path);
         }
-
-        path_ = path;
-        buffer_.clear();
-        replication_ = replication;
-        begin_run(0);
-        buffer_ += HEADER;
-        buffer_ += "\n";
+        interval_file_ << "replication,model_time,Y_interval,"
+                          "queue_a,queue_b,passed_interval\n";
     }
 
-    void stats_logger::close()
+    void stats_logger::interval_close()
     {
-        flush_buffer();
-
-        if (file_.is_open())
+        if (interval_file_.is_open())
         {
-            file_.close();
+            interval_file_.flush();
+            interval_file_.close();
         }
-        path_.clear();
+        interval_path_.clear();
     }
 
-    bool stats_logger::is_active() const
+    bool stats_logger::interval_active() const { return interval_file_.is_open(); }
+
+    void stats_logger::set_interval_rep(int rep) { interval_rep_ = rep; }
+
+    void stats_logger::write_interval_row(double_t t)
     {
-        return file_.is_open();
+        const double_t y = (interval_wait_cnt_ > 0)
+            ? interval_wait_sum_ / interval_wait_cnt_
+            : 0.0;
+        const int passed_interval = passed_ - interval_passed_at_;
+
+        interval_file_ << interval_rep_ << ','
+                       << num(t) << ','
+                       << num(y) << ','
+                       << num(cur_queue_a_) << ','
+                       << num(cur_queue_b_) << ','
+                       << passed_interval << '\n';
+
+        interval_wait_sum_ = 0;
+        interval_wait_cnt_ = 0;
+        interval_passed_at_ = passed_;
     }
 
-    const std::string& stats_logger::path() const
-    {
-        return path_;
-    }
-
-    void stats_logger::set_flush_size(const std::size_t bytes)
-    {
-        flush_size_ = bytes;
-    }
-
-    void stats_logger::set_replication(const int replication)
-    {
-        replication_ = replication;
-    }
-
-    int stats_logger::replication() const
-    {
-        return replication_;
-    }
-
-    void stats_logger::begin_run(const double_t model_time)
+    void stats_logger::begin_run(double_t model_time)
     {
         run_start_ = model_time;
         last_time_ = model_time;
@@ -115,25 +143,20 @@ namespace logging
         area_b_ = 0;
         max_queue_a_ = 0;
         max_queue_b_ = 0;
-        passage_ = 0;
-        passage_sum_ = 0;
         passed_ = 0;
-        wait_ = 0;
         wait_sum_ = 0;
         wait_count_ = 0;
+
+        interval_next_ = model_time + interval_dt_;
+        interval_wait_sum_ = 0;
+        interval_wait_cnt_ = 0;
+        interval_passed_at_ = 0;
     }
 
     void stats_logger::sample(const double_t model_time,
                               const std::size_t queue_a,
                               const std::size_t queue_b)
     {
-        if (!file_.is_open())
-        {
-            return;
-        }
-
-        // очередь была постоянной на интервале (last_time_, model_time),
-        // значит её вклад в среднее — длина, умноженная на длину интервала
         if (model_time > last_time_)
         {
             const double_t dt = model_time - last_time_;
@@ -141,49 +164,37 @@ namespace logging
             area_b_ += cur_queue_b_ * dt;
         }
         last_time_ = model_time;
+        cur_queue_a_ = static_cast<double_t>(queue_a);
+        cur_queue_b_ = static_cast<double_t>(queue_b);
+        if (cur_queue_a_ > max_queue_a_) { max_queue_a_ = cur_queue_a_; }
+        if (cur_queue_b_ > max_queue_b_) { max_queue_b_ = cur_queue_b_; }
 
-        cur_queue_a_ = queue_a;
-        cur_queue_b_ = queue_b;
-
-        if (queue_a > max_queue_a_) { max_queue_a_ = queue_a; }
-        if (queue_b > max_queue_b_) { max_queue_b_ = queue_b; }
-
-        write_row(model_time);
-
-        if (buffer_.size() >= flush_size_)
+        if (!interval_file_.is_open()) { return; }
+        while (model_time >= interval_next_)
         {
-            flush_buffer();
+            write_interval_row(interval_next_);
+            interval_next_ += interval_dt_;
         }
     }
 
-    void stats_logger::car_passed(const double_t passage_time)
+    void stats_logger::car_passed(double_t /*passage_time*/)
     {
-        if (!file_.is_open())
-        {
-            return;
-        }
-
         ++passed_;
-        passage_ = passage_time;
-        passage_sum_ += passage_time;
     }
 
-    void stats_logger::car_waited(const double_t wait_time)
+    void stats_logger::car_waited(double_t wait_time)
     {
-        if (!file_.is_open())
-        {
-            return;
-        }
-
-        wait_ = wait_time;
         wait_sum_ += wait_time;
         ++wait_count_;
+        if (interval_file_.is_open())
+        {
+            interval_wait_sum_ += wait_time;
+            ++interval_wait_cnt_;
+        }
     }
 
-    int stats_logger::passed() const
-    {
-        return passed_;
-    }
+    int stats_logger::wait_count() const { return wait_count_; }
+    int stats_logger::passed() const { return passed_; }
 
     double_t stats_logger::avg_queue_a() const
     {
@@ -195,73 +206,11 @@ namespace logging
         return mean_over_time(area_b_, last_time_ - run_start_);
     }
 
-    double_t stats_logger::max_queue_a() const
-    {
-        return max_queue_a_;
-    }
-
-    double_t stats_logger::max_queue_b() const
-    {
-        return max_queue_b_;
-    }
-
-    double_t stats_logger::passage() const
-    {
-        return passage_;
-    }
-
-    double_t stats_logger::avg_passage() const
-    {
-        return passed_ ? passage_sum_ / passed_ : 0;
-    }
-
-    double_t stats_logger::wait() const
-    {
-        return wait_;
-    }
+    double_t stats_logger::max_queue_a() const { return max_queue_a_; }
+    double_t stats_logger::max_queue_b() const { return max_queue_b_; }
 
     double_t stats_logger::avg_wait() const
     {
         return wait_count_ ? wait_sum_ / wait_count_ : 0;
-    }
-
-    void stats_logger::write_row(const double_t model_time)
-    {
-        buffer_ += std::to_string(replication_);
-        buffer_ += ",";
-        buffer_ += num(model_time);
-        buffer_ += ",";
-        buffer_ += num(cur_queue_a_);
-        buffer_ += ",";
-        buffer_ += num(avg_queue_a());
-        buffer_ += ",";
-        buffer_ += num(cur_queue_b_);
-        buffer_ += ",";
-        buffer_ += num(avg_queue_b());
-        buffer_ += ",";
-        buffer_ += std::to_string(passed_);
-        buffer_ += ",";
-        buffer_ += num(max_queue_a_);
-        buffer_ += ",";
-        buffer_ += num(max_queue_b_);
-        buffer_ += ",";
-        buffer_ += num(passage_);
-        buffer_ += ",";
-        buffer_ += num(avg_passage());
-        buffer_ += ",";
-        buffer_ += num(wait_);
-        buffer_ += ",";
-        buffer_ += num(avg_wait());
-        buffer_ += "\n";
-    }
-
-    void stats_logger::flush_buffer()
-    {
-        if (file_.is_open() && !buffer_.empty())
-        {
-            file_ << buffer_;
-            file_.flush();
-        }
-        buffer_.clear();
     }
 }
