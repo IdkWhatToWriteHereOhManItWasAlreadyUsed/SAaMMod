@@ -8,10 +8,10 @@ namespace math
     public:
         explicit rng(unsigned seed = 0);
 
-        double_t random();
-        double_t uniform(double a, double b);
-        double_t exponential(double frequency);
-        double_t normal(double mean, double sigma);
+        static double_t random();
+        static double_t uniform(double a, double b);
+        static double_t exponential(double frequency);
+        static double_t normal(double mean, double sigma);
 
     private:
         unsigned state_;

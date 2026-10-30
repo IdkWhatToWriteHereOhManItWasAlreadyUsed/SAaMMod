@@ -10,6 +10,7 @@ namespace math
     rng::rng(const unsigned seed)
         : state_(seed == 0 ? 1u : seed)
     {
+        srand(seed);
     }
 
     double rng::random()

@@ -39,7 +39,7 @@ public:
         double_t t_red;
         double_t lambda_a;
         double_t lambda_b;
-        unsigned seed;
+        mutable unsigned seed;
     };
 
     explicit road_1_lane_model(const config& cfg);

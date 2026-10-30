@@ -1,5 +1,6 @@
 #include "public/run_base.h"
 #include <algorithm>
+#include <iostream>
 
 namespace runner
 {
@@ -18,6 +19,7 @@ namespace runner
             model_time_ = next_time(events_[0].time);
             events_[0].handler(*this);
             model_->sample(*this);
+            std::cout << model_time_ << '\n';
         }
 
         // Финальный замер ровно на run_time: окно наблюдения [0, run_time]

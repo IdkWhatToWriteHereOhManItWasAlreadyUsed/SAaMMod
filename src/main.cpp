@@ -1,5 +1,6 @@
 #include <cstdio>
 #include <cstdlib>
+#include <iostream>
 #include <string>
 #include <vector>
 
@@ -80,31 +81,31 @@ namespace
                       const int count,
                       const bool draw_charts = true)
     {
-        auto& logger = logging::logger::instance();
-        auto& stats = logging::stats_logger::instance();
+       // auto& logger = logging::logger::instance();
+      //  auto& stats = logging::stats_logger::instance();
 
-        stats.start(csv, 1);
+       // stats.start(csv, 1);
 
         for (int rep = 1; rep <= count; ++rep)
         {
-            logger.start(jsonl_dir + "_" + std::to_string(rep) + ".jsonl");
+          //  logger.start(jsonl_dir + "_" + std::to_string(rep) + ".jsonl");
 
             auto cfg = base_cfg;
-            cfg.seed += rep - 1;
+           // cfg.seed += rep - 1;
 
             const auto model = std::make_shared<road_1_lane_model>(cfg);
             simple_runner runner(model, RUN_TIME);
-            stats.set_replication(rep);
+          //  stats.set_replication(rep);
             runner.simulate();
 
-            logger.close();
+        //    logger.close();
         }
 
-        stats.close();
+       // stats.close();
 
         if (draw_charts)
         {
-            analyze(csv, charts, label);
+      //      analyze(csv, charts, label);
         }
     }
 }
@@ -114,50 +115,51 @@ int main()
     const std::string cfg = "../custom_configs/";
     const std::string out = "../results/";
 
-    const std::string out_intensity = out + "09_intensity/";
-
     {
-        const double_t lambda_min = 0.30;
-        const double_t lambda_max = 1.50;
-        const double_t lambda_step = 0.05;
-        const int reps = 8;
+        const std::string out_intensity = out + "09_intensity/";
+        const int reps = 1;
         int level = 0;
 
         std::vector<std::string> csvs;
         std::vector<double_t> lambdas;
-        for (double_t lambda = lambda_min; lambda <= lambda_max + 1e-9; lambda += lambda_step)
+
+        const road_1_lane_model::config base_cfg(cfg + "20_reps_overload.json");
+
+        for (int seed = 0; seed <= 100000; seed += 20)
         {
             char label_text[32];
-            std::snprintf(label_text, sizeof(label_text), "%.2f", lambda);
+            std::snprintf(label_text, sizeof(label_text), "%.2d", seed);
             const std::string label = std::string("09_intensity_") + label_text;
 
-            const road_1_lane_model::config base_cfg(
-                30.0, 4.0, 35.0, 50.0, lambda, lambda,
-                static_cast<unsigned>(level * 777));
-
+            base_cfg.seed = seed;
+            std::cout << seed << '\n';
             run_repeated(base_cfg,
                          out_intensity + label,
                          out_intensity + label + ".csv",
                          "", label, reps, false);
 
-            csvs.push_back(out_intensity + label + ".csv");
-            lambdas.push_back(lambda);
+          //  csvs.push_back(out_intensity + label + ".csv");
+           // lambdas.push_back(lambda);
             ++level;
         }
 
-        correlate(csvs, lambdas, out_intensity + "correlations", "09_intensity");
+        //correlate(csvs, lambdas, out_intensity + "correlations", "09_intensity");
     }
-
+/*
     run_once(cfg + "06_a_heavy.json",      out + "06_a_heavy.jsonl",
              out + "06_a_heavy.csv",       out + "06_a_heavy_charts",
              "06_a_heavy");
+*/
+
+
+    /*
     run_once(cfg + "07_b_heavy.json",      out + "07_b_heavy.jsonl",
              out + "07_b_heavy.csv",       out + "07_b_heavy_charts",
              "07_b_heavy");
     run_once(cfg + "08_short_green.json",  out + "08_short_green.jsonl",
              out + "08_short_green.csv",   out + "08_short_green_charts",
-             "08_short_green");
-
+             "08_short_green");*/
+/*
     run_repeated(road_1_lane_model::config(cfg + "10_reps_base.json"),
                  out + "10_reps_base",
                  out + "10_reps_base.csv",
@@ -167,7 +169,7 @@ int main()
                  out + "20_reps_overload",
                  out + "20_reps_overload.csv",
                  out + "20_reps_overload_charts",
-                 "20_reps_overload", 8);
+                 "20_reps_overload", 8);*/
 
     return 0;
 }
