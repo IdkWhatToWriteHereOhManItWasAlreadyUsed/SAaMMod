@@ -181,11 +181,37 @@ namespace
 
     // ---- ЛР3 п.1.5: возможность непрерывного прогона (через автокорреляцию реплик) ----
     void run_lab3_continuous(const std::string& config_path,
-                             const std::string& out_dir,
-                             const double_t run_time,
-                             const int repl)
+                         const std::string& out_dir,
+                         const double_t run_time,
+                         const int repl)
     {
-        run_lab3_pack(config_path, out_dir + "/continuous", repl, run_time);
+        auto& stats = logging::stats_logger::instance();
+        stats.summary_start(out_dir + "/continuous_summary.csv");
+        stats.interval_start(out_dir + "/continuous_interval.csv", 10.0);
+
+        const road_1_lane_model::config base_cfg(config_path);
+
+        parallel_reps(repl, [&](int rep)
+        {
+            auto cfg = base_cfg;
+            cfg.seed = base_cfg.seed + static_cast<unsigned>(rep - 1);
+
+            stats.set_interval_rep(rep);
+            stats.begin_run(0.0);
+
+            auto model = std::make_shared<road_1_lane_model>(cfg);
+            simple_runner runner(model, run_time);
+            runner.simulate();
+
+            stats.publish(rep);
+        });
+
+        for (int rep = 1; rep <= repl; ++rep)
+        {
+            stats.write_replication(rep, base_cfg.seed + static_cast<unsigned>(rep - 1), run_time);
+        }
+        stats.summary_close();
+        stats.interval_close();
     }
 
     // ---- ЛР3 п.1.6: чувствительность к произвольному параметру ----

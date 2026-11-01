@@ -460,6 +460,90 @@ def task_1_4b():
 
     return dict(t0=6000, t1=t1, t2=t2, rows=rows)
 
+
+def task_1_5(t0=None, t1=None):
+    """Гипотеза о возможности непрерывного прогона (постановка препода):
+    сравниваем выборки {Y} на соседних отрезках [T0, T1) и [T1, T2) —
+    F-тест дисперсий + t-тест средних. Если однородны, «шва» между
+    репликами нет, непрерывный прогон допустим.
+    """
+    if t0 is None:
+        raise RuntimeError("task_1_5: нужен T0 из task_1_4")
+    if t1 is None:
+        raise RuntimeError("task_1_5: нужен T1 из task_1_4")
+
+    T0, T1 = int(t0), int(t1)
+    T2 = T1 + (T1 - T0)              # соседний отрезок той же длины
+
+    print(f"\n=== 1.5 Непрерывный прогон: [T0,T1) vs [T1,T2) ===")
+    print(f"T0={T0}, T1={T1}, T2={T2} (длина отрезка {T1 - T0} сек)")
+
+    data = read_intervals(RESULTS / "lab3_continuous/continuous_interval.csv")
+    reps = sorted(data)
+    print(f"реплик: {len(reps)}")
+
+    def y_window(rep, a, b):
+        t, yi, _yc, wc = data[rep]
+        m = (t >= a) & (t < b) & ~np.isnan(yi)
+        w = wc[m]
+        return float(np.sum(yi[m] * w) / w.sum()) if w.sum() > 0 else np.nan
+
+    A = np.array([y_window(r, T0, T1) for r in reps])
+    B = np.array([y_window(r, T1, T2) for r in reps])
+    ok = ~np.isnan(A) & ~np.isnan(B)
+    A, B = A[ok], B[ok]
+    print(f"n_A={len(A)}  mean_A={A.mean():.4f}  s_A={A.std(ddof=1):.4f}")
+    print(f"n_B={len(B)}  mean_B={B.mean():.4f}  s_B={B.std(ddof=1):.4f}")
+
+    # F-тест дисперсий
+    F = max(A.var(ddof=1), B.var(ddof=1)) / min(A.var(ddof=1), B.var(ddof=1))
+    v1, v2 = ((len(A) - 1, len(B) - 1) if A.var(ddof=1) >= B.var(ddof=1)
+              else (len(B) - 1, len(A) - 1))
+    F_cr = stats.f.ppf(0.95, v1, v2)
+    var_equal = F <= F_cr
+
+    # t-тест средних
+    if var_equal:
+        sv = ((len(A) - 1) * A.var(ddof=1) + (len(B) - 1) * B.var(ddof=1)) \
+             / (len(A) + len(B) - 2)
+        t_val = (A.mean() - B.mean()) / math.sqrt(sv * (1/len(A) + 1/len(B)))
+        dof = len(A) + len(B) - 2
+        p_val = 2 * (1 - stats.t.cdf(abs(t_val), dof))
+        test = "t"
+    else:
+        t_val, p_val = stats.ttest_ind(A, B, equal_var=False)
+        test = "Welch"
+
+    print(f"F = {F:.4f}, F_cr = {F_cr:.4f} → "
+          f"дисперсии {'равны' if var_equal else 'РАЗНЫЕ'}")
+    print(f"{test}: t = {t_val:.4f}, p = {p_val:.4f} → "
+          f"средние {'равны' if p_val >= 0.05 else 'РАЗНЫЕ'}")
+
+    homo = (p_val >= 0.05)
+    print(f"\nГипотеза о возможности непрерывного прогона: "
+          f"{'ПРИНИМАЕТСЯ' if homo else 'ОТВЕРГАЕТСЯ'}")
+    print(f"  (соседние отрезки [T0,T1) и [T1,T2) "
+          f"{'не различаются' if homo else 'различаются'} по Y)")
+
+    # график
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    ax.hist(A, bins=10, alpha=0.5, label=f"A: [{T0},{T1})", edgecolor="black")
+    ax.hist(B, bins=10, alpha=0.5, label=f"B: [{T1},{T2})", edgecolor="black")
+    ax.axvline(A.mean(), color="C0", ls="--", label=f"mean A={A.mean():.2f}")
+    ax.axvline(B.mean(), color="C1", ls="--", label=f"mean B={B.mean():.2f}")
+    ax.set_xlabel("Y по отрезку, сек")
+    ax.set_ylabel("частота")
+    ax.set_title(f"п.1.5: A=[{T0},{T1}), B=[{T1},{T2}); "
+                 f"F={F:.2f}, p(t)={p_val:.3f}")
+    ax.legend(fontsize=8); ax.grid(alpha=0.3)
+    fig.tight_layout(); fig.savefig(FIGS / "1_5_continuous.png", dpi=120)
+    plt.close(fig)
+
+    return dict(t0=T0, t1=T1, t2=T2, n=len(A),
+                mean_A=A.mean(), mean_B=B.mean(),
+                F=F, F_cr=F_cr, var_equal=var_equal,
+                t=t_val, p=p_val, homo=homo)
+
 # ---------- 1.6 ----------
 
 def task_1_6(resdir="lab3_sensitivity", fig_name="1_6_sensitivity.png"):
@@ -600,8 +684,30 @@ def main():
     r13 = task_1_3()
     r14 = task_1_4()
     r14b = task_1_4b()
+
+    # п.1.5 использует T0 и T1 из п.1.4
+    t0_est = r14.get("T_detect")
+    t1_stable = r14.get("first_stationary")
+    if t0_est is None or t1_stable is None:
+        print("\n1.5: пропуск — T0/T1 из 1.4 не найдены")
+        r15 = None
+    else:
+        if t1_stable <= t0_est:
+            t1_stable = int(t0_est) + 1200
+        r15 = task_1_5(t0_est, t1_stable)
+
     r16_lambda = task_1_6("lab3_sensitivity", "1_6_sensitivity.png")
     r16_tgreen = task_1_6("lab3_sens_tgreen", "1_6_sensitivity_tgreen.png")
+
+    print("\n=== ИТОГ ===")
+    # ... (как у вас) ...
+    if r15 is not None:
+        print(f"1.5: непрерывный прогон "
+              f"{'ДОПУСТИМ' if r15['homo'] else 'НЕ ДОПУСТИМ'} "
+              f"(F={r15['F']:.2f}, Fкр={r15['F_cr']:.2f}, "
+              f"p(t)={r15['p']:.3f}, n={r15['n']})")
+    else:
+        print("1.5: не выполнен (нет T0/T1)")
 
     print("\n=== ИТОГ ===")
     print(f"1.1: нормальность {'ПРИНЯТА' if r11['accepted'] else 'ОТВЕРГНУТА'} "
@@ -614,7 +720,7 @@ def main():
            if np.isfinite(r14.get('steady_level', np.nan)) else "?")
     print(f"1.4: T_пер≈{tper} сек; уровень после T_пер ≈{lvl} сек")
     t1 = r14b['t1']; t2 = r14b['t2']
-    print(f"1.4b: Т0={r14b['t0']}, Т1={t1}, Т2={t2} сек → "
+    print(f"1.4b: Т1={r14b['t0']}, Т2={t1}, Т0={t2} сек → "
           + (f"реплику можно сократить до {t1} сек"
              if t1 else "время реплики сокращать нельзя"))
     for r16 in (r16_lambda, r16_tgreen):
