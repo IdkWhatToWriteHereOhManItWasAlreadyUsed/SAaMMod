@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
+# ЛР3: анализ стационарного состояния ИМ.
+# п.1.4: Y_interval — честное среднее за интервал (только машины, начавшие
+# движение в интервале), Y_cum — кумулятив (только для визуализации плато).
 import csv
 import math
-import os
 from pathlib import Path
 
 import numpy as np
@@ -23,22 +25,52 @@ def read_Y(path):
             ys.append(float(row["Y"]))
     return np.array(ys)
 
-def read_interval(path):
-    # возвращает dict: rep -> (t[], y[], qA[], qB[])
+def read_intervals(path):
+    # dict rep -> (t, Y_interval [NaN для пустых], Y_cum, w_count_interval)
     data = {}
     with open(path, newline="") as f:
         for row in csv.DictReader(f):
             rep = int(row["replication"])
             t = float(row["model_time"])
-            y = float(row["Y_interval"])
-            qa = float(row["queue_a"])
-            qb = float(row["queue_b"])
+            yi = np.nan if row["Y_interval"] == "NA" else float(row["Y_interval"])
+            yc = float(row["Y_cum"])
+            wc = int(row["w_count_interval"])
             data.setdefault(rep, ([], [], [], []))
             data[rep][0].append(t)
-            data[rep][1].append(y)
-            data[rep][2].append(qa)
-            data[rep][3].append(qb)
+            data[rep][1].append(yi)
+            data[rep][2].append(yc)
+            data[rep][3].append(wc)
     return {r: tuple(np.array(x) for x in v) for r, v in data.items()}
+
+def smooth(x, y, half_width):
+    # скользящее среднее по окну [x-w, x+w]; NaN игнорируются
+    out = np.full_like(y, np.nan, dtype=float)
+    for i, xi in enumerate(x):
+        m = (x >= xi - half_width) & (x <= xi + half_width)
+        if m.any() and np.any(~np.isnan(y[m])):
+            out[i] = np.nanmean(y[m])
+    return out
+
+def willink_ci(values, alpha=0.05):
+    """Асимметричный доверительный интервал по методу Уиллинка.
+    Элемент.Done coroutine-а: a — нормированная мера асимметрии (по μ3)."""
+    x = np.asarray(values, dtype=float)
+    n = len(x)
+    mean = x.mean()
+    sd = x.std(ddof=1)
+    t_value = stats.t.ppf(1 - alpha / 2, n - 1)
+
+    # третий центральный момент, несмещённая оценка
+    mu3 = np.sum((x - mean) ** 3) * n / ((n - 1) * (n - 2))
+    a = mu3 / (6 * math.sqrt(n) * sd ** 3)
+    if abs(a) < 1e-12:          # асимметрии нет — симметричный t-интервал
+        half = t_value * sd / math.sqrt(n)
+        return mean - half, mean + half, 0.0
+
+    g_left = ((1 + 6 * a * (t_value - a)) ** (1.0 / 3) - 1) * 0.5 / a
+    g_right = ((1 + 6 * a * (-t_value - a)) ** (1.0 / 3) - 1) * 0.5 / a
+    return mean - g_left * sd / math.sqrt(n), \
+           mean - g_right * sd / math.sqrt(n), a
 
 # ---------- 1.1 ----------
 
@@ -49,47 +81,86 @@ def task_1_1():
     mu, sd = ys.mean(), ys.std(ddof=1)
     print(f"n={n} mean={mu:.4f} std={sd:.4f} min={ys.min():.3f} max={ys.max():.3f}")
 
-    # Стерджес
-    k = int(np.ceil(1 + 3.322 * math.log10(n)))
+    k = int(np.ceil(1 + 3.322 * math.log10(n)))          # Стерджес
     print(f"bins (Sturges) k={k}")
 
-    # бины по равным вероятностям нормального закона, чтобы Ei были не малы
-    # (иначе хвосты дают Ei < 5 и критерий врёт)
-    qs = np.linspace(0, 1, k + 1)
-    edges = stats.norm.ppf(qs, loc=mu, scale=sd)
-    edges[0] = -np.inf
-    edges[-1] = np.inf
+    # ---------- вариант 1 (лекционный): бины РАВНОЙ ШИРИНЫ ----------
+    # Pi — вероятность попадания N(mu, sd) в интервал [edge_i, edge_{i+1})
+    width_edges = np.linspace(ys.min(), ys.max(), k + 1)
+    cdf = stats.norm.cdf(width_edges, loc=mu, scale=sd)
+    probs = np.diff(cdf)                                  # Pi каждого бина
+    probs[0] += cdf[0]                                    # хвост (-inf, e1)
+    probs[-1] += 1 - cdf[-1]                              # хвост (ek, +inf)
+    observed_w, _ = np.histogram(ys, bins=width_edges)
+    expected_w_n = probs * n
 
-    observed, _ = np.histogram(ys, bins=edges)
-    expected = np.full(k, n / k)
+    # объединение бинов с E < 5 (стандартное правило применения критерия);
+    # хвостовой остаток присоединяется к последнему бину
+    obs_l, exp_p_l = [], []
+    cur_n, cur_p = 0, 0.0
+    for i in range(k):
+        cur_n += observed_w[i]
+        cur_p += probs[i]
+        residue = (i == k - 1)
+        if cur_p * n >= 5 or residue:
+            if residue and obs_l:
+                obs_l[-1] += cur_n
+                exp_p_l[-1] += cur_p
+            else:
+                obs_l.append(cur_n)
+                exp_p_l.append(cur_p)
+            cur_n, cur_p = 0, 0.0
+    obs_l = np.array(obs_l)
+    exp_p_l = np.array(exp_p_l)
+    exp_l = exp_p_l * n
+    dev_l = (obs_l - exp_l) ** 2 / exp_l
+    k_eff = len(obs_l)
 
-    # объединяем бины с Ei < 5 (здесь не должно быть, но пусть)
-    chi2 = ((observed - expected) ** 2 / expected).sum()
-    dof = k - 1 - 2  # -2: оценили mu и sd
+    print(f"\nосновной тест: бины равной ширины (Стерджес), Pi по N(mu, sd); "
+          f"объединение бинов с E<5: {k} → {k_eff} интервалов")
+    print(f"{'инт':>3} {'ni':>4} {'ni/n':>7} {'Pi':>7} {'nPi':>8} {'взнос':>8}")
+    for i in range(k_eff):
+        print(f"{i+1:3d} {obs_l[i]:4d} {obs_l[i]/n:7.3f} {exp_p_l[i]:7.3f} "
+              f"{exp_l[i]:8.1f} {dev_l[i]/n:8.2f}")
+    chi2 = dev_l.sum()
+    dof = k_eff - 1 - 2             # -2 за оценённые mu и sd
     p = 1 - stats.chi2.cdf(chi2, dof)
     chi2_cr = stats.chi2.ppf(0.95, dof)
+    accepted = chi2 < chi2_cr
+    print(f"χ²={chi2:.2f}, dof={dof}, χ²кр(0.95)={chi2_cr:.2f}, p={p:.3f} → "
+          f"нормальность {'ПРИНЯТА' if accepted else 'ОТВЕРГНУТА'}")
 
-    print(f"observed : {observed.tolist()}")
-    print(f"expected : {expected.tolist()}")
-    print(f"chi2 = {chi2:.4f}, dof = {dof}, chi2_cr(0.95) = {chi2_cr:.4f}, p = {p:.4f}")
-    print("H0 (нормальность) " + ("ПРИНЯТА" if chi2 < chi2_cr else "ОТВЕРГНУТА"))
+    # ---------- вариант 2 (контроль): бины равных вероятностей ----------
+    # Pi = 1/k, Ei = n/k >= 5 — нечувствителен к редким хвостам
+    qs = np.linspace(0, 1, k + 1)
+    edges = stats.norm.ppf(qs, loc=mu, scale=sd)
+    edges[0], edges[-1] = -np.inf, np.inf
+    observed_q, _ = np.histogram(ys, bins=edges)
+    exp_q = np.full(k, n / k)
+    chi2_q = ((observed_q - exp_q) ** 2 / exp_q).sum()
+    dof_q = k - 1 - 2
+    p_q = 1 - stats.chi2.cdf(chi2_q, dof_q)
+    acc_q = chi2_q < stats.chi2.ppf(0.95, dof_q)
+    print(f"\nконтроль (бины равных вероятностей, Pi={1.0/k:.3f}): "
+          f"χ²={chi2_q:.3f}, dof={dof_q}, p={p_q:.3f} → "
+          f"{'ПРИНЯТА' if acc_q else 'ОТВЕРГНУТА'}")
 
-    # график
+    # границы графика — равная ширина (вариант 1)
+    pe = width_edges.copy()
+
     fig, ax = plt.subplots(figsize=(8, 4.5))
-    ax.hist(ys, bins=edges, edgecolor="black", density=True, alpha=0.7, label="эмпирика")
-    xs = np.linspace(ys.min() - 2 * sd, ys.max() + 2 * sd, 300)
+    ax.hist(ys, bins=pe, edgecolor="black", density=True, alpha=0.7,
+            label="эмпирика")
+    xs = np.linspace(pe[0], pe[-1], 300)
     ax.plot(xs, stats.norm.pdf(xs, mu, sd), "r-", lw=2, label="N(μ, σ)")
-    ax.set_xlabel("Y, сек")
-    ax.set_ylabel("плотность")
-    ax.set_title(f"п.1.1: Y, n={n}, χ²={chi2:.2f} (dof={dof}), p={p:.3f}")
-    ax.legend()
-    ax.grid(alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(FIGS / "1_1_hist.png", dpi=120)
-    plt.close(fig)
+    ax.set_xlabel("Y, сек"); ax.set_ylabel("плотность")
+    ax.set_title(f"п.1.1: Y, n={n}, χ²={chi2:.2f} (dof={dof}), "
+                 f"χ²кр={chi2_cr:.2f}, p={p:.3f}")
+    ax.legend(); ax.grid(alpha=0.3)
+    fig.tight_layout(); fig.savefig(FIGS / "1_1_hist.png", dpi=120); plt.close(fig)
 
-    return dict(n=n, mu=mu, sd=sd, chi2=chi2, dof=dof, p=p,
-                accepted=bool(chi2 < chi2_cr))
+    return dict(n=n, mu=mu, sd=sd, chi2=chi2, chi2_check=chi2_q, dof=dof,
+                p=p, accepted=accepted)
 
 # ---------- 1.2 ----------
 
@@ -97,28 +168,54 @@ def task_1_2():
     print("\n=== 1.2 Точечные и интервальные оценки (n=20) ===")
     ys = read_Y(RESULTS / "lab3_base_n20_summary.csv")
     n = len(ys)
-    mu = ys.mean()
-    s = ys.std(ddof=1)
+    mu, s = ys.mean(), ys.std(ddof=1)
     t_cr = stats.t.ppf(0.975, n - 1)
     half = t_cr * s / math.sqrt(n)
     lo, hi = mu - half, mu + half
-    print(f"n={n} Y_bar={mu:.4f} s={s:.4f}")
-    print(f"t_cr(0.975, {n-1}) = {t_cr:.4f}")
-    print(f"ДИ 95%: [{lo:.4f}; {hi:.4f}]  полуширина={half:.4f}")
-    print(f"относительная точность = {100*half/mu:.2f}%")
+    print(f"n={n} Y_bar={mu:.4f} s={s:.4f}  t_cr(0.975,{n-1})={t_cr:.4f}")
+    print(f"t-ДИ 95%: [{lo:.4f}; {hi:.4f}]  полуширина={half:.4f}  "
+          f"точность={100 * half / mu:.2f}%")
 
-    fig, ax = plt.subplots(figsize=(6, 4))
-    ax.errorbar([0], [mu], yerr=[half], fmt="o", capsize=8, color="C0")
-    ax.set_xlim(-1, 1)
-    ax.set_xticks([])
+    wl, wh, a = willink_ci(ys)
+    print(f"асимметрия: a={a:.4f} (μ3={np.sum((ys - mu) ** 3) * n / ((n - 1) * (n - 2)):.2f})")
+    print(f"ДИ Уиллинка 95%: [{wl:.4f}; {wh:.4f}]  "
+          f"лев. полуширина={mu - wl:.4f}, прав.={wh - mu:.4f}")
+
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    # автоматические оси: симметрично вокруг Ȳ с запасом по самому
+    # широкому интервалу и по сырым данным
+    span = max(half, wh - mu, mu - wl,
+               ys.max() - mu, mu - ys.min()) * 1.4
+    ax.set_ylim(min(mu - span, ys.min() - 0.3), max(mu + span, ys.max() + 0.3))
+
+    # все реплики как точки (лёгкий джиттер по X, чтобы не слипались)
+    rng = np.random.default_rng(42)
+    x_data = -0.30
+    jit = rng.uniform(-0.055, 0.055, len(ys))
+    ax.scatter(x_data + jit, ys, s=26, color="gray", alpha=0.7, zorder=2)
+    ax.hlines(ys.mean(), x_data - 0.10, x_data + 0.10, color="k",
+              lw=1.6, zorder=3)
+
+    ax.errorbar([0], [mu], yerr=[[mu - wl], [wh - mu]], fmt="o", capsize=8,
+                color="C1", zorder=4)
+    ax.errorbar([0.18], [mu], yerr=half, fmt="o", capsize=8, color="C0",
+                zorder=4)
+    ax.axhspan(wl, wh, xmin=0.30, xmax=0.42, color="C1", alpha=0.12, zorder=1)
+    ax.axhspan(lo, hi, xmin=0.42, xmax=0.54, color="C0", alpha=0.12, zorder=1)
+    ax.text(0, wh + span * 0.03, f"Уиллинк\n[{wl:.2f}; {wh:.2f}]",
+            ha="center", va="bottom", fontsize=8, color="C1")
+    ax.text(0.18, lo - span * 0.03, f"t-Стьюдент\n[{lo:.2f}; {hi:.2f}]",
+            ha="center", va="top", fontsize=8, color="C0")
+    ax.axhline(mu, color="gray", ls=":", lw=1)
+    ax.set_xlim(-0.55, 0.55)
+    ax.set_xticks([x_data, 0, 0.18])
+    ax.set_xticklabels([f"реплики (n={len(ys)})", "Уиллинк", "t-Стьюдент"])
     ax.set_ylabel("Y, сек")
-    ax.set_title(f"п.1.2: Ȳ={mu:.2f}, 95% ДИ=[{lo:.2f}; {hi:.2f}]")
+    ax.set_title(f"п.1.2: Ȳ={mu:.2f} сек, n=20, 95%")
     ax.grid(alpha=0.3, axis="y")
-    fig.tight_layout()
-    fig.savefig(FIGS / "1_2_ci.png", dpi=120)
-    plt.close(fig)
+    fig.tight_layout(); fig.savefig(FIGS / "1_2_ci.png", dpi=120); plt.close(fig)
 
-    return dict(n=n, mu=mu, s=s, t_cr=t_cr, lo=lo, hi=hi, half=half)
+    return dict(n=n, mu=mu, s=s, lo=lo, hi=hi, wl=wl, wh=wh, a=a)
 
 # ---------- 1.3 ----------
 
@@ -128,171 +225,402 @@ def task_1_3():
     rows = []
     for n in ns:
         ys = read_Y(RESULTS / f"lab3_precision/n{n}_summary.csv")
-        mu = ys.mean()
-        s = ys.std(ddof=1)
-        t_cr = stats.t.ppf(0.975, len(ys) - 1)
-        half = t_cr * s / math.sqrt(len(ys))
+        mu, s = ys.mean(), ys.std(ddof=1)
+        t_cr = stats.t.ppf(0.975, n - 1)
+        half = t_cr * s / math.sqrt(n)
         eps = 100 * half / mu
         rows.append(dict(n=n, mu=mu, s=s, half=half, eps=eps))
-        print(f"n={n:3d}  mean={mu:8.4f}  s={s:7.4f}  half={half:7.4f}  eps={eps:6.3f}%")
+        print(f"n={n:3d}  mean={mu:8.4f}  s={s:7.4f}  half={half:7.4f}  "
+              f"eps={eps:6.3f}%")
 
-    # оценка n* по формуле: half ≈ t * s / sqrt(n), t→z=1.96 при больших n
-    # eps(n) = 1.96 * s_inf / sqrt(n) / mu_inf  ≤ 5%
-    # используем s, mu при n=200 как асимптотику
-    s_inf = rows[-1]["s"]
-    mu_inf = rows[-1]["mu"]
-    z = 1.96
-    n_star = (z * s_inf / (0.05 * mu_inf)) ** 2
-    print(f"оценка n* (5%) ≈ {n_star:.1f}")
+    s_inf, mu_inf = rows[-1]["s"], rows[-1]["mu"]
 
-    # график
+    # n*: минимальное n, при котором t(0.975, n-1)*s_inf/sqrt(n) <= 0.05*mu_inf
+    # (итерациями с t-квантилем, а не z=1.96, — согласовано с эмпирикой ε(n))
+    n_star = None
+    for n in range(2, 20001):
+        if stats.t.ppf(0.975, n - 1) * s_inf / math.sqrt(n) <= 0.05 * mu_inf:
+            n_star = n
+            break
+    print(f"оценка n* (5%, итерации с t) ≈ {n_star}")
+
     fig, ax = plt.subplots(figsize=(8, 4.5))
-    eps_arr = [r["eps"] for r in rows]
-    ax.plot(ns, eps_arr, "o-", label="эмпирика ε(n)")
-    nn = np.linspace(5, 220, 200)
-    ax.plot(nn, 100 * z * s_inf / (np.sqrt(nn) * mu_inf), "r--",
+    ax.plot(ns, [r["eps"] for r in rows], "o-", label="эмпирика ε(n)")
+    nn = np.linspace(5, 220, 300)
+    ax.plot(nn, 100 * 1.96 * s_inf / (np.sqrt(nn) * mu_inf), "r-", lw=1,
             label="асимптотика 100·1.96·s/√n/Ȳ")
     ax.axhline(5, color="green", ls=":", label="5%")
-    ax.axvline(n_star, color="green", ls=":", alpha=0.6)
-    ax.set_xlabel("n (реплик)")
-    ax.set_ylabel("относительная полуширина ДИ, %")
-    ax.set_title(f"п.1.3: ε(n), n*≈{n_star:.0f}")
-    ax.legend()
-    ax.grid(alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(FIGS / "1_3_eps.png", dpi=120)
-    plt.close(fig)
+    ax.axvline(n_star, color="green", ls=":", alpha=0.6, label=f"n*≈{n_star}")
+    ax.set_xlabel("n (реплик)"); ax.set_ylabel("относительная полуширина ДИ, %")
+    ax.set_title(f"п.1.3: ε(n), n*≈{n_star}")
+    ax.legend(fontsize=8); ax.grid(alpha=0.3)
+    fig.tight_layout(); fig.savefig(FIGS / "1_3_eps.png", dpi=120); plt.close(fig)
 
-    return dict(rows=rows, n_star=n_star, s_inf=s_inf, mu_inf=mu_inf)
+    return dict(rows=rows, n_star=n_star)
 
 # ---------- 1.4 ----------
 
 def task_1_4():
-    print("\n=== 1.4 Переходный период (кумулятивное среднее) ===")
-    data = read_interval(RESULTS / "lab3_transient/transient_interval.csv")
-    print(f"реплик: {len(data)}")
+    print("\n=== 1.4 Переходный период ===")
+    data = read_intervals(RESULTS / "lab3_transient/transient_interval.csv")
+    reps = sorted(data)
+    print(f"реплик: {len(reps)}")
 
-    fig, ax = plt.subplots(figsize=(11, 5))
+    t = data[reps[0]][0]
+    Y_int = np.vstack([data[r][1] for r in reps])   # NaN — пустой интервал
+    Y_cum = np.vstack([data[r][2] for r in reps])
+    W_cnt = np.vstack([data[r][3] for r in reps])   # число машин в интервале
+    print(f"пустых интервалов (NA): {int(np.isnan(Y_int).sum())} из {Y_int.size}")
 
-    # накладываем 10 кривых + их среднее
-    all_t = None
-    for rep, (t, y, qa, qb) in sorted(data.items()):
-        ax.plot(t, y, lw=0.8, alpha=0.45, label=f"rep {rep}")
-        if all_t is None:
-            all_t = t
+    W = 600          # окно сравнения/сглаживания, сек
+    HALF_W = 300     # полуширина сглаживания, сек
 
-    # среднее по репликам в каждой точке t (для визуального плато)
-    ys_matrix = np.array([y for _, (t, y, qa, qb) in sorted(data.items())])
-    y_mean = ys_matrix.mean(axis=0)
+    # взвешенные по числу машин средние — согласованы с семантикой Y
+    # (интервалы с 1 машиной не весят так же, как интервалы с 5 машинами)
+    def wmean(rep, tt0, tt1):
+        yi, wc = data[rep][1], data[rep][3]
+        m = (t >= tt0) & (t < tt1) & ~np.isnan(yi)
+        c = wc[m]
+        return float(np.sum(yi[m] * c) / c.sum()) if c.sum() > 0 else np.nan
 
-    ax.plot(all_t, y_mean, "k-", lw=2.0, label="среднее по 10 репликам")
-    ax.axvline(1200, color="red", ls="--", alpha=0.5, label="T=1200 (кандидат T_пер)")
+    def rolling_weighted(rep, half):
+        # центрированное скользящее взвешенное среднее, окно 2*half
+        out = np.full(len(t), np.nan)
+        for i, ti in enumerate(t):
+            v = wmean(rep, ti - half, ti + half)
+            out[i] = v
+        return out
+
+    # --- тесты стационарности: ПО ИНТЕРВАЛ-ЗНАЧЕНИЯМ, не по кумулятиву ---
+    # окно [T,T+W) против [T+W,T+2W), среднее взвешено числом машин,
+    # парный t-тест по репликам
+    print(f"\nвзвешенные средние окна [T,T+W) vs [T+W,T+2W), W={W}:")
+    print(f"{'T':>6} {'mean1':>8} {'mean2':>8} {'p(парный t)':>12} "
+          f"{'стационарно (p>=0.05)':>22}")
+    first_stationary = None
+    rows_stat = []
+    for T in range(200, int(t[-1]) - 2 * W + 1, 200):
+        m1 = np.array([wmean(r, T, T + W) for r in reps])
+        m2 = np.array([wmean(r, T + W, T + 2 * W) for r in reps])
+        ok = ~np.isnan(m1) & ~np.isnan(m2)
+        if ok.sum() < 5:
+            continue
+        tval, pval = stats.ttest_rel(m1[ok], m2[ok])
+        stat = pval >= 0.05
+        rows_stat.append((T, pval))
+        if stat and first_stationary is None:
+            first_stationary = T
+        print(f"{T:6d} {m1[ok].mean():8.3f} {m2[ok].mean():8.3f} "
+              f"{pval:12.3f} {'да' if stat else '—':>22}")
+
+    # --- автоматический T_пер: сравнение уровней «префикс vs хвост» ---
+    # для границы ti: взвешенное среднее ожидания по [0,ti) против [ti,t_end),
+    # парный t-тест по репликам (каждая реплика — блок). T_пер — первая
+    # граница, начиная с которой H0 не отвергается и для двух границ подряд
+    pairs = []
+    for ti in range(W, int(t[-1]) - W + 1, W):
+        pre = np.array([wmean(r, 0, ti) for r in reps])
+        post = np.array([wmean(r, ti, t[-1]) for r in reps])
+        ok = ~np.isnan(pre) & ~np.isnan(post)
+        if ok.sum() < 5:
+            continue
+        _, p = stats.ttest_rel(pre[ok], post[ok])
+        pairs.append((int(ti), float(pre[ok].mean()), float(post[ok].mean()), p))
+    print(f"\nпрефикс [0,T) vs хвост [T,{t[-1]:.0f}): парный тест по репликам")
+    print(f"{'T':>6} {'до T':>8} {'после T':>8} {'p':>7} {'стационарно':>12}")
+    T_detect = None
+    LOOK_AHEAD = 2   # устойчивость: принято и для двух границ подряд
+    for k, (ti, m_pre, m_post, p) in enumerate(pairs):
+        stable = all(q >= 0.05 for *_, q in pairs[k:k + LOOK_AHEAD + 1])
+        print(f"{ti:6d} {m_pre:8.3f} {m_post:8.3f} {p:7.3f} "
+              f"{'да' if stable else '—':>12}")
+        if stable and T_detect is None:
+            T_detect = ti
+    steady_level = (np.nanmean([wmean(r, (T_detect or 0) + W,
+                                (T_detect or 0) + 2 * W) for r in reps])
+                    if T_detect else np.nan)
+    if T_detect is None:
+        print(f"\nT_пер не найден — см. таблицу выше")
+    else:
+        print(f"\nT_пер ≈ {T_detect} сек, уровень отклика после T_пер "
+              f"≈ {steady_level:.1f} сек")
+
+    # --- график: сглаженные взвешенные кривые по репликам + их среднее ---
+    curves = np.array([rolling_weighted(r, HALF_W) for r in reps])
+    curve_mean = np.nanmean(np.where(np.isnan(curves), np.nan, curves), axis=0)
+
+    fig, ax = plt.subplots(figsize=(11, 5.5))
+    for i, r in enumerate(reps):
+        ax.plot(t, curves[i], lw=0.7, alpha=0.35)
+    ax.plot(t, curve_mean, "b-", lw=2.2,
+            label="Y_interval (взвеш. по числу машин), среднее по репликам")
+    ax.plot(t, smooth(t, Y_cum.mean(axis=0), HALF_W), "k--", lw=1.5,
+            label="Y_cum кумулятив (визуализация)")
+    if T_detect is not None:
+        ax.axvline(T_detect, color="red", ls="--", lw=1.2,
+                   label=f"T_пер ≈ {T_detect:.0f} сек")
+    else:
+        ax.text(0.02, 0.02, "T_пер критерием не найден", transform=ax.transAxes,
+                fontsize=8, color="red")
     ax.set_xlabel("модельное время, сек")
-    ax.set_ylabel("кумулятивное среднее ожидание, сек")
-    ax.set_title("п.1.4: накопленное среднее Y(t) по 10 репликам")
-    ax.legend(ncol=2, fontsize=7, loc="lower right")
-    ax.grid(alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(FIGS / "1_4_transient_cum.png", dpi=120)
+    ax.set_ylabel("среднее ожидание, сек")
+    ax.set_title(f"п.1.4: взвешенные Y_interval (окно {2*HALF_W} с) "
+                 f"и кумулятив, 10 реплик")
+    ax.legend(fontsize=8, loc="lower right"); ax.grid(alpha=0.3)
+    fig.tight_layout(); fig.savefig(FIGS / "1_4_transient.png", dpi=120)
     plt.close(fig)
 
-    # T_пер: первая точка, после которой среднее по репликам
-    # меняется меньше чем на eps за окно W
-    W = 600        # окно, сек
-    eps = 0.5      # порог, сек
-    T_пер = None
-    for i, t in enumerate(all_t):
-        if t + W > all_t[-1]:
-            break
-        m1 = y_mean[i]
-        m2 = y_mean[(all_t >= t + W)][0]
-        if abs(m2 - m1) < eps:
-            T_пер = t
-            break
+    return dict(T_detect=T_detect, first_stationary=first_stationary,
+                rows_stat=tuple(rows_stat), steady_level=steady_level)
 
-    print(f"T_пер (визуально, порог {eps} сек за {W} сек) ≈ {T_пер}")
+# ---------- 1.4b: гипотеза об уменьшении времени прогона ----------
 
-    # для сравнения — статистика по двум окнам (тот же t-тест, но теперь по Y(t))
-    for T in [200, 400, 600, 800, 1000, 1200, 1500, 2000, 3000]:
-        a = y_mean[(all_t >= T) & (all_t < T + W)]
-        b = y_mean[(all_t >= T + W) & (all_t < T + 2*W)]
-        if len(a) < 5 or len(b) < 5:
+def task_1_4b():
+    print("\n=== 1.4b Однородность {Y0}(T0=6000) и {YT}: "
+          "можно ли сократить прогон? ===")
+    ref = read_Y(RESULTS / "lab3_shortened/T6000_summary.csv")
+    n0 = len(ref)
+    mu0, s0 = ref.mean(), ref.std(ddof=1)
+    print(f"эталон {Y0_LABEL}: T0=6000, n={n0}, mean={mu0:.4f}, s={s0:.4f}")
+
+    rows = []
+    for path in sorted((RESULTS / "lab3_shortened").glob("T*_summary.csv")):
+        Ti = int(path.stem.replace("_summary", "")[1:])
+        if Ti == 6000:
             continue
-        tval, pval = stats.ttest_ind(a, b, equal_var=False)
-        print(f"T={T:5d}  n1={len(a):4d}  n2={len(b):4d}  "
-              f"mean1={a.mean():7.3f}  mean2={b.mean():7.3f}  p={pval:.3f}")
+        ys = read_Y(path)
+        muT, sT = ys.mean(), ys.std(ddof=1)
+        # 1) F-тест равенства дисперсий
+        F = max(s0, sT) ** 2 / min(s0, sT) ** 2
+        v1, v2 = ((n0 - 1, len(ys) - 1) if s0 >= sT
+                  else (len(ys) - 1, n0 - 1))
+        F_cr = stats.f.ppf(0.95, v1, v2)
+        var_equal = F <= F_cr
+        # 2) равенство средних: t при равных дисперсиях, иначе Уэлч
+        if var_equal:
+            sv = ((n0 - 1) * s0 ** 2 + (len(ys) - 1) * sT ** 2) \
+                / (n0 + len(ys) - 2)
+            tval = (mu0 - muT) / math.sqrt(sv * (1 / n0 + 1 / len(ys)))
+            dof = n0 + len(ys) - 2
+            pval = 2 * (1 - stats.t.cdf(abs(tval), dof))
+            test = "t"
+        else:
+            tval, pval = stats.ttest_ind(ref, ys, equal_var=False)
+            test = "Welch"
+        homo = pval >= 0.05
+        rows.append(dict(T=Ti, mu=muT, s=sT, F=F, F_cr=F_cr,
+                         var_equal=var_equal, test=test, t=tval,
+                         p=pval, homo=homo))
+        print(f"T={Ti:5d}  mean={muT:8.4f} s={sT:7.4f} | "
+              f"F={F:5.3f} (кр={F_cr:5.3f} → "
+              f"{'дисперсии равны' if var_equal else 'дисперсии РАЗНЫЕ'}) | "
+              f"{test}: t={tval:6.3f} p={pval:5.3f} → "
+              f"{'ОДНОРОДНЫ' if homo else 'различаются'}")
 
-    return dict(all_t=all_t, y_mean=y_mean, T_пер=T_пер)
+    rows.sort(key=lambda r: r["T"])
+    # Т0 — эталонная реплика; Т1 — максимальное Т<Т0, однородное целиком
+    # (равенство дисперсий И средних); Т2 — минимальное Т, при котором ещё
+    # не отвергается равенство средних
+    t1 = max((r["T"] for r in rows if r["var_equal"] and r["homo"]), default=None)
+    t2 = min((r["T"] for r in rows if r["homo"]), default=None)
+    if t1 is not None:
+        print(f"\nТ0={6000} (эталон {Y0_LABEL}); Т1={t1} (однородность по "
+              f"дисперсиям и средним); Т2={t2} (минимум, где среднее ещё "
+              f"не смещено)")
+        print(f"вывод: реплику можно сократить с 6000 до {t1} сек; "
+              f"ниже {t2} сек среднее занижено, уменьшение недопустимо")
+    else:
+        print(f"\nоднородных точек нет — время реплики сокращать нельзя")
 
+    fig, ax = plt.subplots(figsize=(9, 4.5))
+    ts_ = [r["T"] for r in rows]
+    ms_ = [r["mu"] for r in rows]
+    err_ = []
+    for r in rows:
+        path = RESULTS / f"lab3_shortened/T{r['T']}_summary.csv"
+        ys = read_Y(path)
+        err_.append(stats.t.ppf(0.975, len(ys) - 1) * r["s"] / math.sqrt(len(ys)))
+    ref_err = stats.t.ppf(0.975, n0 - 1) * s0 / math.sqrt(n0)
+    ax.errorbar(ts_, ms_, yerr=err_, fmt="o-", capsize=4,
+                label="{YT}, n=30")
+    ax.errorbar([6000], [mu0], yerr=ref_err, fmt="s", capsize=4,
+                color="red", label="{Y0} (T0=6000, эталон)")
+    ax.axhline(mu0, color="gray", ls=":")
+    if t1:
+        ax.axvline(t1, color="green", ls=":", alpha=0.8,
+                   label=f"Т1={t1} (однороден целиком)")
+    if t2 and t2 != t1:
+        ax.axvline(t2, color="orange", ls="--", alpha=0.8,
+                   label=f"Т2={t2} (граница смещения среднего)")
+    ax.set_xlabel("T окончания реплики, сек"); ax.set_ylabel("Ȳ, сек")
+    ax.set_title("п.1.4b: однородность выборок при сокращении прогона")
+    ax.legend(fontsize=8); ax.grid(alpha=0.3)
+    fig.tight_layout(); fig.savefig(FIGS / "1_4b_shortened.png", dpi=120)
+    plt.close(fig)
+
+    return dict(t0=6000, t1=t1, t2=t2, rows=rows)
 
 # ---------- 1.6 ----------
 
-def task_1_6():
-    print("\n=== 1.6 Чувствительность (5 точек по lambda_a) ===")
-    # ожидаемый порядок: x-2, x-1, x0, x1, x2
-    points = [("x-2", 0.06), ("x-1", 0.07), ("x0", 0.08), ("x1", 0.09), ("x2", 0.10)]
+def task_1_6(resdir="lab3_sensitivity", fig_name="1_6_sensitivity.png"):
+    """Чувствительность и достаточная точность задания входной переменной.
+    Данные пишет main.cpp: {resdir}/{variable}_x{k}_summary.csv (k=-3..3),
+    x0 берётся из конфига и описывается в {resdir}/meta.csv — анализ
+    полностью общий, подходит для любой переменной."""
+    meta_path = RESULTS / resdir / "meta.csv"
+    with open(meta_path) as fh:
+        rd = csv.DictReader(fh)
+        meta = next(rd)                       # первая строка — описание опыта
+    var = meta["variable"]
+    x0 = float(meta["x0"])
+    delta = float(meta["delta"])
+
+    print(f"\n=== 1.6 Чувствительность ({var}, x0={x0:g}, δ={delta:g}) ===")
     rows = []
-    for name, lam in points:
-        path = RESULTS / f"lab3_sensitivity/{name}_summary.csv"
+    for k in range(-3, 4):
+        path = RESULTS / resdir / f"{var}_x{k}_summary.csv"
         if not path.exists():
-            print(f"  нет файла {path}, пропуск")
             continue
         ys = read_Y(path)
-        rows.append(dict(name=name, lam=lam, n=len(ys),
-                         mean=ys.mean(), s=ys.std(ddof=1)))
-        print(f"{name:4s} lambda={lam:.2f}  n={len(ys):3d}  "
-              f"mean={ys.mean():8.4f}  s={ys.std(ddof=1):7.4f}")
+        x = x0 + k * delta
+        wl, wh, a = willink_ci(ys)
+        rows.append(dict(name=path.stem, k=k, x=x, n=len(ys), mean=ys.mean(),
+                         s=ys.std(ddof=1), ymin=ys.min(), ymax=ys.max(),
+                         ys=ys, wl=wl, wh=wh, a=a))
+    if len(rows) < 3:
+        raise RuntimeError(f"{resdir}: недостаточно точек ({len(rows)})")
+    rows.sort(key=lambda r: r["k"])
+    x0_row = next((r for r in rows if abs(r["x"] - x0) < 1e-9), rows[len(rows)//2])
+    x0, y0 = x0_row["x"], x0_row["mean"]
+    for r in rows:
+        print(f"{var}_x{r['k']:+d} x={r['x']:g}  n={r['n']}  mean={r['mean']:8.4f}  "
+              f"s={r['s']:7.4f}  Уиллинк=[{r['wl']:.2f}; {r['wh']:.2f}]")
 
-    if len(rows) < 2:
-        return dict(rows=rows)
+    d = 0.05 * y0          # «несущественная» погрешность отклика
+    print(f"\nY(x0)={y0:.4f} → d (5%) = {d:.4f}")
 
+    # --- критерий из лекции: ВНУТРИ точки (реплик — выборка y) ---
+    print("\nразброс внутри точки (max y − min y ≤ d → нет чувствительности):")
+    for r in rows:
+        spread = r["ymax"] - r["ymin"]
+        print(f"x={r['x']:g} spread={spread:7.3f} → "
+              f"{'НЕ чувствительна' if spread <= d else 'чувствительна'}")
+
+    # --- разница средних соседних точек ---
     means = np.array([r["mean"] for r in rows])
-    y0 = next((r["mean"] for r in rows if r["name"] == "x0"), means.mean())
-    d = 0.05 * y0  # «несущественная» погрешность 5%
-    spread = means.max() - means.min()
-    sensitive = spread > d
+    spread_means = means.max() - means.min()
+    print(f"\nразброс средних точек max(Ybar)-min(Ybar)={spread_means:.4f}")
 
-    print(f"\nY(x0) = {y0:.4f}  d = 5% = {d:.4f}")
-    print(f"max(Ybar) - min(Ybar) = {spread:.4f}")
-    print("модель " + ("ЧУВСТВИТЕЛЬНА" if sensitive else "НЕ ЧУВСТВИТЕЛЬНА")
-          + " к lambda_a на масштабе δ")
+    print(f"\nt-тесты соседних точек (δ={delta:g}):")
+    adj_significant = False
+    for i in range(len(rows) - 1):
+        ys1, ys2 = rows[i]["ys"], rows[i + 1]["ys"]
+        F = max(ys1.std(ddof=1), ys2.std(ddof=1)) ** 2 \
+            / min(ys1.std(ddof=1), ys2.std(ddof=1)) ** 2
+        F_cr = stats.f.ppf(0.95, len(ys1) - 1, len(ys2) - 1)
+        eq = F <= F_cr
+        tval, pval = stats.ttest_ind(ys1, ys2, equal_var=eq)
+        diff = rows[i + 1]["mean"] - rows[i]["mean"]
+        sig = pval < 0.05
+        adj_significant |= sig
+        print(f"x={rows[i]['x']:g}→{rows[i+1]['x']:g}: "
+              f"ΔYbar={diff:7.3f}, {'t' if eq else 'Welch'}={tval:6.3f}, "
+              f"p={pval:5.3f} → {'различаются' if sig else 'не различаются'}")
 
-    fig, ax = plt.subplots(figsize=(7, 4.5))
-    xs = [r["lam"] for r in rows]
-    ms = [r["mean"] for r in rows]
-    ss = [r["s"] for r in rows]
-    ns_ = [r["n"] for r in rows]
-    err = [1.96 * s / math.sqrt(n) for s, n in zip(ss, ns_)]
-    ax.errorbar(xs, ms, yerr=err, fmt="o-", capsize=5)
-    ax.axhline(y0, color="gray", ls=":", label=f"Ȳ(x0)={y0:.2f}")
-    ax.axhspan(y0 - d, y0 + d, color="green", alpha=0.15, label=f"±{d:.2f} (5%)")
-    ax.set_xlabel("lambda_a, маш/сек")
-    ax.set_ylabel("Ȳ, сек")
-    ax.set_title(f"п.1.6: чувствительность к lambda_a (spread={spread:.2f})")
-    ax.legend()
-    ax.grid(alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(FIGS / "1_6_sensitivity.png", dpi=120)
+    # --- крайние точки: диапазон варьирования целиком ---
+    ys_l, ys_r = rows[0]["ys"], rows[-1]["ys"]
+    _, p_ex = stats.ttest_ind(ys_l, ys_r, equal_var=False)
+    extremes_significant = bool(p_ex < 0.05)
+    print(f"\nкрайние точки x={rows[0]['x']:g} vs {rows[-1]['x']:g}: "
+          f"ΔYbar={rows[-1]['mean'] - rows[0]['mean']:.3f}, "
+          f"Welch p={p_ex:.4f} → "
+          f"{'различаются' if extremes_significant else 'не различаются'}")
+
+    # --- чувствительность dY/dx и достаточная точность задания переменной ---
+    # Y(x) может быть нелинейна (насыщение), поэтому:
+    # - глобальный наклон по всем точкам — масштаб эффекта;
+    # - δ_max = допустимая точность задания переменной — по ЛОКАЛЬНОМУ
+    #   наклону в окрестности x0 (точки k=-1, 0, +1)
+    xs = np.array([r["x"] for r in rows])
+    slope, intercept, r_val, p_slope, se = stats.linregress(xs, means)
+    mid_rows = [r for r in rows if -1 <= r["k"] <= 1]
+    xs_m = np.array([r["x"] for r in mid_rows])
+    means_m = np.array([r["mean"] for r in mid_rows])
+    slope_loc, intercept_loc, r_loc, p_loc, _se = stats.linregress(xs_m, means_m)
+    delta_max = 0.05 * y0 / abs(slope_loc)
+    print(f"\nрегрессия Y({var}): dY/dx={slope:.2f} "
+          f"глобально (R²={r_val ** 2:.3f}, p={p_slope:.4f}); "
+          f"локально у x0 dY/dx≈{slope_loc:.2f}")
+    print(f"достаточная точность задания {var} (локально): |Δx| <= {delta_max:.4f} "
+          f"(иначе ΔY выходит за d=5%)")
+
+    sensitive = adj_significant or extremes_significant
+    verdict_detail = (
+        f"; значимых различий соседних точек на шкале δ={delta:g} "
+        f"{'есть' if adj_significant else 'нет'}, различие крайних точек "
+        f"{'значимо' if extremes_significant else 'не значимо'}; достаточная "
+        f"точность задания переменной δ_max≈{delta_max:.4f}")
+    print(f"\nИТОГ: к {var} модель "
+          + ("ЧУВСТВИТЕЛЬНА" if sensitive else "НЕ ЧУВСТВИТЕЛЬНА")
+          + verdict_detail)
+
+    # --- график ---
+    fig, ax = plt.subplots(figsize=(7.5, 4.5))
+    n_pp = rows[0]["n"]
+    t_cr = stats.t.ppf(0.975, n_pp - 1)
+    err = [t_cr * r["s"] / math.sqrt(r["n"]) for r in rows]
+    ax.errorbar(xs, means, yerr=err, fmt="o-", capsize=5,
+                label=f"Ȳ ± t·s/√n (n={n_pp} на точку)")
+    xx = np.linspace(xs.min(), xs.max(), 50)
+    ax.plot(xx, intercept + slope * xx, "r--",
+            label=f"глобальная регрессия: {slope:.0f}·x{intercept:+.1f}")
+    xxm = np.linspace(xs_m.min(), xs_m.max(), 50)
+    ax.plot(xxm, intercept_loc + slope_loc * xxm, "g-.",
+            label=f"локальная у x0: {slope_loc:.0f}·x{intercept_loc:+.1f}")
+    ax.axhspan(y0 - d, y0 + d, color="green", alpha=0.15,
+               label=f"полоса ±d=5% ({d:.1f})")
+    ax.set_xlabel(f"{var}"); ax.set_ylabel("Ȳ, сек")
+    ax.set_title(f"п.1.6: чувствительность к {var}\n"
+                 f"dY/dx≈{slope_loc:.0f} (лок.), δ_max({var})≈{delta_max:.4f}")
+    ax.legend(fontsize=8); ax.grid(alpha=0.3)
+    fig.tight_layout(); fig.savefig(FIGS / fig_name, dpi=120)
     plt.close(fig)
 
-    return dict(rows=rows, y0=y0, d=d, spread=spread, sensitive=bool(sensitive))
+    return dict(var=var, rows=rows, y0=y0, d=d, slope=slope,
+                slope_loc=slope_loc, delta_max=delta_max,
+                sensitive=sensitive, p_slope=p_slope)
 
 # ---------- main ----------
+
+Y0_LABEL = "{Y0}"
 
 def main():
     r11 = task_1_1()
     r12 = task_1_2()
     r13 = task_1_3()
-    task_1_4()
-    r16 = task_1_6()
+    r14 = task_1_4()
+    r14b = task_1_4b()
+    r16_lambda = task_1_6("lab3_sensitivity", "1_6_sensitivity.png")
+    r16_tgreen = task_1_6("lab3_sens_tgreen", "1_6_sensitivity_tgreen.png")
 
     print("\n=== ИТОГ ===")
-    print(f"1.1: χ²={r11['chi2']:.2f} (cr={stats.chi2.ppf(0.95, r11['dof']):.2f}), "
-          f"p={r11['p']:.3f} → {'нормальность принята' if r11['accepted'] else 'нормальность отвергнута'}")
-    print(f"1.2: Ȳ={r12['mu']:.3f}, 95% ДИ=[{r12['lo']:.3f}; {r12['hi']:.3f}]")
-    print(f"1.3: n*≈{r13['n_star']:.0f} (5% точность)")
-    print(f"1.6: spread={r16['spread']:.3f}, d={r16['d']:.3f} → "
-          f"{'чувствительна' if r16['sensitive'] else 'не чувствительна'}")
+    print(f"1.1: нормальность {'ПРИНЯТА' if r11['accepted'] else 'ОТВЕРГНУТА'} "
+          f"→ интервальная оценка — Уиллинк")
+    print(f"1.2: Ȳ={r12['mu']:.3f}; t-ДИ=[{r12['lo']:.3f}; {r12['hi']:.3f}]; "
+          f"ДИ Уиллинка=[{r12['wl']:.3f}; {r12['wh']:.3f}]")
+    print(f"1.3: n*≈{r13['n_star']} (точность 5%)")
+    tper = (f"{r14['T_detect']:.0f}" if r14['T_detect'] is not None else "?")
+    lvl = (f"{r14['steady_level']:.1f}"
+           if np.isfinite(r14.get('steady_level', np.nan)) else "?")
+    print(f"1.4: T_пер≈{tper} сек; уровень после T_пер ≈{lvl} сек")
+    t1 = r14b['t1']; t2 = r14b['t2']
+    print(f"1.4b: Т0={r14b['t0']}, Т1={t1}, Т2={t2} сек → "
+          + (f"реплику можно сократить до {t1} сек"
+             if t1 else "время реплики сокращать нельзя"))
+    for r16 in (r16_lambda, r16_tgreen):
+        print(f"1.6: {r16['var']}: dY/dx(лок у x0)={r16['slope_loc']:.1f}; "
+              f"δ_max≈{r16['delta_max']:.4f} → "
+              f"{'чувствительна' if r16['sensitive'] else 'не чувствительна'}")
     print(f"\nграфики: {FIGS}")
 
 if __name__ == "__main__":

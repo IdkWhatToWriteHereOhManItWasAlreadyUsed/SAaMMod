@@ -3,10 +3,16 @@
 #include <cmath>
 #include <cstddef>
 #include <fstream>
+#include <map>
+#include <mutex>
 #include <string>
 
 namespace logging
 {
+    // Сборщик статистики ИМ. Накопители статистики одного прогона
+    // thread-local, поэтому реплики можно выполнять параллельно: движок
+    // не меняется, каждая реплика работает со своим ядром и по завершении
+    // публикует снимок (publish). Файловые операции под мьютексом.
     class stats_logger
     {
     public:
@@ -14,13 +20,14 @@ namespace logging
         ~stats_logger();
 
         void summary_start(const std::string& path);
+        // строка реплики пишется из опубликованного снимка
         void write_replication(int rep, unsigned seed, double_t run_time);
         void summary_close();
         bool summary_active() const;
 
         void interval_start(const std::string& path, double_t dt);
         void interval_close();
-        bool interval_active() const;
+        // номер реплики для буфера интервалов ТЕКУЩЕГО потока
         void set_interval_rep(int rep);
 
         void begin_run(double_t model_time);
@@ -28,43 +35,41 @@ namespace logging
         void car_passed(double_t passage_time);
         void car_waited(double_t wait_time);
 
-        int wait_count() const;
-        int passed() const;
-        double_t avg_queue_a() const;
-        double_t avg_queue_b() const;
-        double_t max_queue_a() const;
-        double_t max_queue_b() const;
-        double_t avg_wait() const;
+        // опубликовать результаты прогона текущего потока как реплику rep:
+        // снимок попадает в реестр для write_replication, буфер строк
+        // интервалов дописывается в interval-файл
+        void publish(int rep);
 
     private:
         stats_logger() = default;
         stats_logger(const stats_logger&) = delete;
         stats_logger& operator=(const stats_logger&) = delete;
 
-        void write_interval_row(double_t t);
+        // потоково-локальное ядро накопления статистики одного прогона
+        struct core;
+        static core& get_core();
 
-        double_t run_start_ = 0;
-        double_t last_time_ = 0;
-        double_t cur_queue_a_ = 0;
-        double_t cur_queue_b_ = 0;
-        double_t area_a_ = 0;
-        double_t area_b_ = 0;
-        double_t max_queue_a_ = 0;
-        double_t max_queue_b_ = 0;
-        int passed_ = 0;
-        double_t wait_sum_ = 0;
-        int wait_count_ = 0;
+        struct snapshot
+        {
+            double_t y_sum = 0;
+            int      y_cnt = 0;
+            int      passed = 0;
+            double_t max_a = 0;
+            double_t max_b = 0;
+        };
+        snapshot take_snapshot();
+
+        std::mutex io_;
+        std::map<int, snapshot> snapshots_;
 
         std::ofstream summary_file_;
         std::string   summary_path_;
 
+        // файловые члены; параметры интервала читаются рабочими потоками
+        // из interval_dt_/interval_open_ до старта потоков (без гонок)
         std::ofstream interval_file_;
         std::string   interval_path_;
         double_t      interval_dt_ = 0;
-        double_t      interval_next_ = 0;
-        double_t      interval_wait_sum_ = 0;
-        int           interval_wait_cnt_ = 0;
-        int           interval_passed_at_ = 0;
-        int           interval_rep_ = 1;
+        bool          interval_open_ = false;
     };
 }

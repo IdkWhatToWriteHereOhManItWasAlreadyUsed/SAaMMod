@@ -1,8 +1,14 @@
+#include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <thread>
+#include <vector>
 
 #include "stats_logger.h"
 #include "road_1_lane_model/road_1_lane_model.h"
@@ -44,6 +50,34 @@ namespace
         return "lambda_a";
     }
 
+    // ---- параллельный запуск реплик ----
+    // каждая реплика независима (свой seed, своё thread-local ядро
+    // статистики), поэтому реплики #1..count распределяются по пулу
+    // потоков; ограничение по числу ядер, максимум 8
+    void parallel_reps(int count, const std::function<void(int rep)>& job)
+    {
+        const unsigned hw = std::thread::hardware_concurrency();
+        const std::size_t threads =
+            std::max(1u, std::min<unsigned>(hw ? hw : 1u, 8u));
+
+        std::atomic<int> next{1};
+        std::vector<std::thread> pool;
+        pool.reserve(std::min<std::size_t>(threads, count));
+        for (std::size_t i = 0;
+             i < threads && static_cast<int>(i) < count; ++i)
+        {
+            pool.emplace_back([&]
+            {
+                for (int rep = next.fetch_add(1);
+                     rep <= count; rep = next.fetch_add(1))
+                {
+                    job(rep);
+                }
+            });
+        }
+        for (std::thread& t : pool) { t.join(); }
+    }
+
     // ---- ЛР3: пакет реплик ----
     void run_lab3_pack(const road_1_lane_model::config& base_cfg,
                        const std::string& out_prefix,
@@ -53,7 +87,7 @@ namespace
         auto& stats = logging::stats_logger::instance();
         stats.summary_start(out_prefix + "_summary.csv");
 
-        for (int rep = 1; rep <= count; ++rep)
+        parallel_reps(count, [&](int rep)
         {
             auto cfg = base_cfg;
             cfg.seed = base_cfg.seed + static_cast<unsigned>(rep - 1);
@@ -64,7 +98,14 @@ namespace
             simple_runner runner(model, run_time);
             runner.simulate();
 
-            stats.write_replication(rep, cfg.seed, run_time);
+            stats.publish(rep);
+        });
+
+        // строки сводки пишутся последовательно в порядке реплик
+        for (int rep = 1; rep <= count; ++rep)
+        {
+            stats.write_replication(
+                rep, base_cfg.seed + static_cast<unsigned>(rep - 1), run_time);
         }
         stats.summary_close();
     }
@@ -91,6 +132,9 @@ namespace
     }
 
     // ---- ЛР3 п.1.4: переходный период ----
+    // реплики временных рядов выполняются параллельно; каждая реплика
+    // копит строки интервала в thread-local буфер и публикует их в файл
+    // одним блоком (порядок строк внутри реплики сохраняется)
     void run_lab3_transient(const std::string& config_path,
                             const std::string& out_dir,
                             const double_t long_run_time,
@@ -101,7 +145,7 @@ namespace
 
         const road_1_lane_model::config base_cfg(config_path);
 
-        for (int rep = 1; rep <= repl; ++rep)
+        parallel_reps(repl, [&](int rep)
         {
             auto cfg = base_cfg;
             cfg.seed = base_cfg.seed + static_cast<unsigned>(rep - 1);
@@ -112,9 +156,27 @@ namespace
             auto model = std::make_shared<road_1_lane_model>(cfg);
             simple_runner runner(model, long_run_time);
             runner.simulate();
-        }
+
+            stats.publish(rep);
+        });
 
         stats.interval_close();
+    }
+
+    // ---- ЛР3 п.1.4: гипотеза об уменьшении времени прогона ----
+    // серия опытов с одинаковым начальным состоянием и числом реплик,
+    // но разными интервалами реализации реплик; {Y0} при T0 — эталон
+    void run_lab3_shortened(const std::string& config_path,
+                            const std::string& out_dir,
+                            const int repl)
+    {
+        const double_t ts[] = {6000.0, 5000.0, 4000.0, 3000.0, 2400.0, 2000.0,
+                               1800.0, 1700, 1500.0, 1400, 1300, 1200.0, 1100, 1000,  900.0, 800, 700, 600.0};
+        for (const double_t t : ts)
+        {
+            const std::string prefix = out_dir + "/T" + std::to_string(static_cast<int>(t));
+            run_lab3_pack(config_path, prefix, repl, t);
+        }
     }
 
     // ---- ЛР3 п.1.5: возможность непрерывного прогона (через автокорреляцию реплик) ----
@@ -127,18 +189,20 @@ namespace
     }
 
     // ---- ЛР3 п.1.6: чувствительность к произвольному параметру ----
-    // points = 5 (k = -2..2), window = reps_per_point
+    // x0 берётся ИЗ ТЕКУЩЕГО конфига (не рассинхронизируется при правках
+    // конфигурации), точки x0 + k*delta, k = -3..3; рядом с данными
+    // пишется meta.csv — им пользуется анализ lab3_stats.py
     void run_lab3_sensitivity(const std::string& config_path,
                               const std::string& out_dir,
                               param p,
-                              const double_t x0,
                               const double_t delta,
                               const int reps_per_point)
     {
-        auto base_cfg = road_1_lane_model::config(config_path);
+        road_1_lane_model::config base_cfg(config_path);
+        const double_t x0 = field(base_cfg, p);
         const std::string tag = name_of(p);
 
-        for (int k = -2; k <= 2; ++k)
+        for (int k = -3; k <= 3; ++k)
         {
             auto cfg = base_cfg;
             field(cfg, p) = x0 + k * delta;
@@ -146,6 +210,10 @@ namespace
             const std::string prefix = out_dir + "/" + tag + "_x" + std::to_string(k);
             run_lab3_pack(cfg, prefix, reps_per_point, RUN_TIME);
         }
+
+        std::ofstream meta(out_dir + "/meta.csv");
+        meta << "variable,x0,delta,reps_per_point\n"
+             << tag << ',' << x0 << ',' << delta << ',' << reps_per_point << '\n';
     }
 }
 
@@ -160,16 +228,13 @@ int main()
     run_lab3_precision  (base_cfg, OUT_DIR + "lab3_precision");
     run_lab3_transient  (base_cfg, OUT_DIR + "lab3_transient", 6000.0, 10);
     run_lab3_continuous (base_cfg, OUT_DIR + "lab3_continuous", RUN_TIME, 30);
+    run_lab3_shortened  (base_cfg, OUT_DIR + "lab3_shortened", 30);
 
-    // по lambda_a: x0 = 0.08, delta = 0.01, 5 реплик на точку
     run_lab3_sensitivity(base_cfg, OUT_DIR + "lab3_sensitivity",
-                         param::lambda_a, 0.08, 0.01, 5);
+                         param::lambda_a, 0.01, 20);
 
-    // примеры других параметров:
-    // run_lab3_sensitivity(base_cfg, OUT_DIR + "lab3_sens_tgreen",
-    //                      param::t_green, 60.0, 5.0, 5);
-    // run_lab3_sensitivity(base_cfg, OUT_DIR + "lab3_sens_passage",
-    //                      param::passage_time, 20.0, 2.0, 5);
+    run_lab3_sensitivity(base_cfg, OUT_DIR + "lab3_sens_tgreen",
+                         param::t_green, 4.0, 20);
 
     return 0;
 }
