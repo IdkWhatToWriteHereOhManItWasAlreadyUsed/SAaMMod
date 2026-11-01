@@ -116,9 +116,7 @@ namespace logging
 
     void stats_logger::write_interval_row(double_t t)
     {
-        const double_t y = (interval_wait_cnt_ > 0)
-            ? interval_wait_sum_ / interval_wait_cnt_
-            : 0.0;
+        const double_t y = (wait_count_ > 0) ? wait_sum_ / wait_count_ : 0.0;
         const int passed_interval = passed_ - interval_passed_at_;
 
         interval_file_ << interval_rep_ << ','
