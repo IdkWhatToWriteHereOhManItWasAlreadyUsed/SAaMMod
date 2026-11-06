@@ -16,7 +16,13 @@
 
 namespace
 {
-    constexpr double_t RUN_TIME = 6000.0;
+    constexpr double_t RUN_TIME = 10000.0;
+    constexpr double_t T_SETTLE = 1200.0;   // принятое время установления
+    // п.1.5: один длинный прогон из 100 участков по 4800 с после T0
+    constexpr double_t SEGMENT_WINDOW = 4800.0;
+    constexpr int      SEGMENT_COUNT  = 100;
+    constexpr double_t CONTINUOUS_TIME =
+        T_SETTLE + SEGMENT_COUNT * SEGMENT_WINDOW;   // 481200 с
     const std::string CFG_DIR = "../custom_configs/";
     const std::string OUT_DIR = "../results/";
 
@@ -82,16 +88,22 @@ namespace
     void run_lab3_pack(const road_1_lane_model::config& base_cfg,
                        const std::string& out_prefix,
                        const int count,
-                       const double_t run_time)
+                       const double_t run_time,
+                       const bool with_intervals = false)
     {
         auto& stats = logging::stats_logger::instance();
         stats.summary_start(out_prefix + "_summary.csv");
+        if (with_intervals)
+        {
+            stats.interval_start(out_prefix + "_interval.csv", 10.0);
+        }
 
         parallel_reps(count, [&](int rep)
         {
             auto cfg = base_cfg;
             cfg.seed = base_cfg.seed + static_cast<unsigned>(rep - 1);
 
+            if (with_intervals) { stats.set_interval_rep(rep); }
             stats.begin_run(0.0);
 
             auto model = std::make_shared<road_1_lane_model>(cfg);
@@ -108,15 +120,17 @@ namespace
                 rep, base_cfg.seed + static_cast<unsigned>(rep - 1), run_time);
         }
         stats.summary_close();
+        if (with_intervals) { stats.interval_close(); }
     }
 
     void run_lab3_pack(const std::string& config_path,
                        const std::string& out_prefix,
                        const int count,
-                       const double_t run_time)
+                       const double_t run_time,
+                       const bool with_intervals = false)
     {
         run_lab3_pack(road_1_lane_model::config(config_path),
-                      out_prefix, count, run_time);
+                      out_prefix, count, run_time, with_intervals);
     }
 
     // ---- ЛР3 п.1.3: зависимость точности от n ----
@@ -163,23 +177,25 @@ namespace
         stats.interval_close();
     }
 
-    // ---- ЛР3 п.1.4: гипотеза об уменьшении времени прогона ----
-    // серия опытов с одинаковым начальным состоянием и числом реплик,
-    // но разными интервалами реализации реплик; {Y0} при T0 — эталон
+    // ---- ЛР3 п.1.4: сокращение времени прогона при известном T0=1200 ----
+    // Для каждого T пишутся и summary, и interval: анализ берёт только
+    // участок [T_SETTLE, T], поэтому переходный процесс не учитывается.
     void run_lab3_shortened(const std::string& config_path,
                             const std::string& out_dir,
                             const int repl)
     {
-        const double_t ts[] = {6000.0, 5000.0, 4000.0, 3000.0, 2400.0, 2000.0,
-                               1800.0, 1700, 1500.0, 1400, 1300, 1200.0, 1100, 1000,  900.0, 800, 700, 600.0};
+        const double_t ts[] = {10000.0, 9000.0, 8000.0, 7000.0, 6000.0,
+                               5000.0, 4000.0, 3500.0, 3000.0, 2500.0,
+                               2000.0, 1800.0, 1700, 1600, 1500.0};
         for (const double_t t : ts)
         {
+            if (t <= T_SETTLE) { continue; }   // окно [T0,T] должно быть > 0
             const std::string prefix = out_dir + "/T" + std::to_string(static_cast<int>(t));
-            run_lab3_pack(config_path, prefix, repl, t);
+            run_lab3_pack(config_path, prefix, repl, t, true);
         }
     }
 
-    // ---- ЛР3 п.1.5: возможность непрерывного прогона (через автокорреляцию реплик) ----
+    // ---- ЛР3 п.1.5: один длинный прогон, 100 участков по 4800 с ----
     void run_lab3_continuous(const std::string& config_path,
                          const std::string& out_dir,
                          const double_t run_time,
@@ -218,6 +234,12 @@ namespace
     // x0 берётся ИЗ ТЕКУЩЕГО конфига (не рассинхронизируется при правках
     // конфигурации), точки x0 + k*delta, k = -3..3; рядом с данными
     // пишется meta.csv — им пользуется анализ lab3_stats.py
+    struct sensitivity_case
+    {
+        param p;
+        const char* dir;
+        double_t delta;
+    };
     void run_lab3_sensitivity(const std::string& config_path,
                               const std::string& out_dir,
                               param p,
@@ -248,19 +270,31 @@ int main()
     const std::string base_cfg = CFG_DIR + "lab3_base.json";
     const std::string base_out = OUT_DIR + "lab3_base";
 
-    run_lab3_pack(base_cfg, base_out + "_n180", 180, RUN_TIME);
+    run_lab3_pack(base_cfg, base_out + "_n500", 500, RUN_TIME);
     run_lab3_pack(base_cfg, base_out + "_n20",  20,  RUN_TIME);
 
     run_lab3_precision  (base_cfg, OUT_DIR + "lab3_precision");
-    run_lab3_transient  (base_cfg, OUT_DIR + "lab3_transient", 6000.0, 10);
-    run_lab3_continuous (base_cfg, OUT_DIR + "lab3_continuous", RUN_TIME, 30);
+    run_lab3_transient  (base_cfg, OUT_DIR + "lab3_transient", RUN_TIME, 100);
+
+    run_lab3_continuous (base_cfg, OUT_DIR + "lab3_continuous",
+                         CONTINUOUS_TIME, 1);
     run_lab3_shortened  (base_cfg, OUT_DIR + "lab3_shortened", 30);
 
-    run_lab3_sensitivity(base_cfg, OUT_DIR + "lab3_sensitivity",
-                         param::lambda_a, 0.01, 20);
 
-    run_lab3_sensitivity(base_cfg, OUT_DIR + "lab3_sens_tgreen",
-                         param::t_green, 4.0, 20);
+    const sensitivity_case sensitivity_cases[] =
+    {
+        {param::passage_time,  "lab3_sens_passage",   2.0},
+        {param::cars_interval, "lab3_sens_cinterval", 0.2},
+        {param::t_green,       "lab3_sens_tgreen",    4.0},
+        {param::t_red,         "lab3_sens_tred",      3.0},
+        {param::lambda_a,      "lab3_sensitivity",    0.01},
+        {param::lambda_b,      "lab3_sens_lambdab",   0.01},
+    };
+
+    for (const sensitivity_case& c : sensitivity_cases)
+    {
+        run_lab3_sensitivity(base_cfg, OUT_DIR + c.dir, c.p, c.delta, 20);
+    }
 
     return 0;
 }

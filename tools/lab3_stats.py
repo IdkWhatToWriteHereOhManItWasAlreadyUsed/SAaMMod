@@ -16,6 +16,14 @@ RESULTS = Path("../results")
 FIGS = RESULTS / "figures"
 FIGS.mkdir(exist_ok=True)
 
+# Длительность эталонного прогона (сек) — должна совпадать с RUN_TIME
+# в src/main.cpp и с точкой T{REF_RUN} в результатах п.1.4b.
+REF_RUN = 10000
+# Принятое время установления модели (сек) для п.1.4 и п.1.5.
+T_SETTLE = 1200.0
+# Минимальная длина каждого из двух сравниваемых отрезков в п.1.5, сек.
+MIN_CONTINUOUS_SEGMENT = 300.0
+
 # ---------- утилиты ----------
 
 def read_Y(path):
@@ -75,8 +83,8 @@ def willink_ci(values, alpha=0.05):
 # ---------- 1.1 ----------
 
 def task_1_1():
-    print("\n=== 1.1 Хи-квадрат на нормальность (n=180) ===")
-    ys = read_Y(RESULTS / "lab3_base_n180_summary.csv")
+    print("\n=== 1.1 Хи-квадрат на нормальность (n=500) ===")
+    ys = read_Y(RESULTS / "lab3_base_n500_summary.csv")
     n = len(ys)
     mu, sd = ys.mean(), ys.std(ddof=1)
     print(f"n={n} mean={mu:.4f} std={sd:.4f} min={ys.min():.3f} max={ys.max():.3f}")
@@ -261,7 +269,12 @@ def task_1_3():
 # ---------- 1.4 ----------
 
 def task_1_4():
-    print("\n=== 1.4 Переходный период ===")
+    """П.1.4: время установления принято равным T0=1200.
+
+    Статистический поиск T_пер больше не используется: T0 задан.
+    Здесь показываем переходный процесс и уровень отклика после T0.
+    """
+    print(f"\n=== 1.4 Переходный период: принято T0={T_SETTLE:.0f} сек ===")
     data = read_intervals(RESULTS / "lab3_transient/transient_interval.csv")
     reps = sorted(data)
     print(f"реплик: {len(reps)}")
@@ -269,14 +282,12 @@ def task_1_4():
     t = data[reps[0]][0]
     Y_int = np.vstack([data[r][1] for r in reps])   # NaN — пустой интервал
     Y_cum = np.vstack([data[r][2] for r in reps])
-    W_cnt = np.vstack([data[r][3] for r in reps])   # число машин в интервале
     print(f"пустых интервалов (NA): {int(np.isnan(Y_int).sum())} из {Y_int.size}")
 
-    W = 600          # окно сравнения/сглаживания, сек
+    W = 600          # окно оценки уровня после T0, сек
     HALF_W = 300     # полуширина сглаживания, сек
 
     # взвешенные по числу машин средние — согласованы с семантикой Y
-    # (интервалы с 1 машиной не весят так же, как интервалы с 5 машинами)
     def wmean(rep, tt0, tt1):
         yi, wc = data[rep][1], data[rep][3]
         m = (t >= tt0) & (t < tt1) & ~np.isnan(yi)
@@ -284,70 +295,19 @@ def task_1_4():
         return float(np.sum(yi[m] * c) / c.sum()) if c.sum() > 0 else np.nan
 
     def rolling_weighted(rep, half):
-        # центрированное скользящее взвешенное среднее, окно 2*half
         out = np.full(len(t), np.nan)
         for i, ti in enumerate(t):
-            v = wmean(rep, ti - half, ti + half)
-            out[i] = v
+            out[i] = wmean(rep, ti - half, ti + half)
         return out
 
-    # --- тесты стационарности: ПО ИНТЕРВАЛ-ЗНАЧЕНИЯМ, не по кумулятиву ---
-    # окно [T,T+W) против [T+W,T+2W), среднее взвешено числом машин,
-    # парный t-тест по репликам
-    print(f"\nвзвешенные средние окна [T,T+W) vs [T+W,T+2W), W={W}:")
-    print(f"{'T':>6} {'mean1':>8} {'mean2':>8} {'p(парный t)':>12} "
-          f"{'стационарно (p>=0.05)':>22}")
-    first_stationary = None
-    rows_stat = []
-    for T in range(200, int(t[-1]) - 2 * W + 1, 200):
-        m1 = np.array([wmean(r, T, T + W) for r in reps])
-        m2 = np.array([wmean(r, T + W, T + 2 * W) for r in reps])
-        ok = ~np.isnan(m1) & ~np.isnan(m2)
-        if ok.sum() < 5:
-            continue
-        tval, pval = stats.ttest_rel(m1[ok], m2[ok])
-        stat = pval >= 0.05
-        rows_stat.append((T, pval))
-        if stat and first_stationary is None:
-            first_stationary = T
-        print(f"{T:6d} {m1[ok].mean():8.3f} {m2[ok].mean():8.3f} "
-              f"{pval:12.3f} {'да' if stat else '—':>22}")
-
-    # --- автоматический T_пер: сравнение уровней «префикс vs хвост» ---
-    # для границы ti: взвешенное среднее ожидания по [0,ti) против [ti,t_end),
-    # парный t-тест по репликам (каждая реплика — блок). T_пер — первая
-    # граница, начиная с которой H0 не отвергается и для двух границ подряд
-    pairs = []
-    for ti in range(W, int(t[-1]) - W + 1, W):
-        pre = np.array([wmean(r, 0, ti) for r in reps])
-        post = np.array([wmean(r, ti, t[-1]) for r in reps])
-        ok = ~np.isnan(pre) & ~np.isnan(post)
-        if ok.sum() < 5:
-            continue
-        _, p = stats.ttest_rel(pre[ok], post[ok])
-        pairs.append((int(ti), float(pre[ok].mean()), float(post[ok].mean()), p))
-    print(f"\nпрефикс [0,T) vs хвост [T,{t[-1]:.0f}): парный тест по репликам")
-    print(f"{'T':>6} {'до T':>8} {'после T':>8} {'p':>7} {'стационарно':>12}")
-    T_detect = None
-    LOOK_AHEAD = 2   # устойчивость: принято и для двух границ подряд
-    for k, (ti, m_pre, m_post, p) in enumerate(pairs):
-        stable = all(q >= 0.05 for *_, q in pairs[k:k + LOOK_AHEAD + 1])
-        print(f"{ti:6d} {m_pre:8.3f} {m_post:8.3f} {p:7.3f} "
-              f"{'да' if stable else '—':>12}")
-        if stable and T_detect is None:
-            T_detect = ti
-    steady_level = (np.nanmean([wmean(r, (T_detect or 0) + W,
-                                (T_detect or 0) + 2 * W) for r in reps])
-                    if T_detect else np.nan)
-    if T_detect is None:
-        print(f"\nT_пер не найден — см. таблицу выше")
-    else:
-        print(f"\nT_пер ≈ {T_detect} сек, уровень отклика после T_пер "
-              f"≈ {steady_level:.1f} сек")
+    T0 = float(T_SETTLE)
+    steady_level = np.nanmean([wmean(r, T0, T0 + W) for r in reps])
+    print(f"T0={T0:.0f} сек (принято по заданию); уровень Y на "
+          f"[{T0:.0f},{T0 + W:.0f}) ≈ {steady_level:.1f} сек")
 
     # --- график: сглаженные взвешенные кривые по репликам + их среднее ---
     curves = np.array([rolling_weighted(r, HALF_W) for r in reps])
-    curve_mean = np.nanmean(np.where(np.isnan(curves), np.nan, curves), axis=0)
+    curve_mean = np.nanmean(curves, axis=0)
 
     fig, ax = plt.subplots(figsize=(11, 5.5))
     for i, r in enumerate(reps):
@@ -356,39 +316,62 @@ def task_1_4():
             label="Y_interval (взвеш. по числу машин), среднее по репликам")
     ax.plot(t, smooth(t, Y_cum.mean(axis=0), HALF_W), "k--", lw=1.5,
             label="Y_cum кумулятив (визуализация)")
-    if T_detect is not None:
-        ax.axvline(T_detect, color="red", ls="--", lw=1.2,
-                   label=f"T_пер ≈ {T_detect:.0f} сек")
-    else:
-        ax.text(0.02, 0.02, "T_пер критерием не найден", transform=ax.transAxes,
-                fontsize=8, color="red")
+    ax.axvline(T0, color="red", ls="--", lw=1.2,
+               label=f"T0 = {T0:.0f} сек (принято)")
     ax.set_xlabel("модельное время, сек")
     ax.set_ylabel("среднее ожидание, сек")
-    ax.set_title(f"п.1.4: взвешенные Y_interval (окно {2*HALF_W} с) "
-                 f"и кумулятив, 10 реплик")
+    ax.set_title(f"п.1.4: T0={T0:.0f} сек принято; "
+                 f"взвешенные Y_interval (окно {2*HALF_W} с)")
     ax.legend(fontsize=8, loc="lower right"); ax.grid(alpha=0.3)
     fig.tight_layout(); fig.savefig(FIGS / "1_4_transient.png", dpi=120)
     plt.close(fig)
 
-    return dict(T_detect=T_detect, first_stationary=first_stationary,
-                rows_stat=tuple(rows_stat), steady_level=steady_level)
+    return dict(T_detect=T0, steady_level=steady_level)
 
 # ---------- 1.4b: гипотеза об уменьшении времени прогона ----------
 
 def task_1_4b():
-    print("\n=== 1.4b Однородность {Y0}(T0=6000) и {YT}: "
-          "можно ли сократить прогон? ===")
-    ref = read_Y(RESULTS / "lab3_shortened/T6000_summary.csv")
+    """П.1.4: сокращение рантайма при принятом T0=1200.
+
+    Эталон — прогон длительностью REF_RUN; для кандидата T сравниваем
+    Y на [T0,T] с Y на [T0,REF_RUN]. Используются interval-файлы,
+    поэтому переходный процесс в выборки не попадает.
+    T_short — минимальная длительность, для которой T и следующий
+    (более длинный) кандидат однородны с эталоном.
+    """
+    print(f"\n=== 1.4 Сокращение рантайма при T0={T_SETTLE:.0f} ===")
+    ref_path = RESULTS / f"lab3_shortened/T{REF_RUN}_interval.csv"
+    if not ref_path.exists():
+        print(f"п.1.4: нет {ref_path} — пропуск")
+        return None
+
+    def window_means(path, a, b):
+        data = read_intervals(path)
+        vals = []
+        for rep in sorted(data):
+            t, yi, _yc, wc = data[rep]
+            m = (t >= a) & (t < b) & ~np.isnan(yi)
+            w = wc[m]
+            vals.append(float(np.sum(yi[m] * w) / w.sum())
+                        if w.sum() > 0 else np.nan)
+        out = np.array(vals)
+        return out[~np.isnan(out)]
+
+    ref = window_means(ref_path, T_SETTLE, REF_RUN)
     n0 = len(ref)
     mu0, s0 = ref.mean(), ref.std(ddof=1)
-    print(f"эталон {Y0_LABEL}: T1=6000, n={n0}, mean={mu0:.4f}, s={s0:.4f}")
+    print(f"эталон {Y0_LABEL}: T={REF_RUN}, Y на "
+          f"[{T_SETTLE:.0f},{REF_RUN}], n={n0}, "
+          f"mean={mu0:.4f}, s={s0:.4f}")
 
     rows = []
-    for path in sorted((RESULTS / "lab3_shortened").glob("T*_summary.csv")):
-        Ti = int(path.stem.replace("_summary", "")[1:])
-        if Ti == 6000:
+    for path in sorted((RESULTS / "lab3_shortened").glob("T*_interval.csv")):
+        Ti = int(path.stem.replace("_interval", "")[1:])
+        if Ti <= T_SETTLE or Ti == REF_RUN:
             continue
-        ys = read_Y(path)
+        ys = window_means(path, T_SETTLE, Ti)
+        if len(ys) < 2:
+            continue
         muT, sT = ys.mean(), ys.std(ddof=1)
         # 1) F-тест равенства дисперсий
         F = max(s0, sT) ** 2 / min(s0, sT) ** 2
@@ -408,156 +391,219 @@ def task_1_4b():
             tval, pval = stats.ttest_ind(ref, ys, equal_var=False)
             test = "Welch"
         homo = pval >= 0.05
-        rows.append(dict(T=Ti, mu=muT, s=sT, F=F, F_cr=F_cr,
+        rows.append(dict(T=Ti, mu=muT, s=sT, n=len(ys), F=F, F_cr=F_cr,
                          var_equal=var_equal, test=test, t=tval,
                          p=pval, homo=homo))
-        print(f"T={Ti:5d}  mean={muT:8.4f} s={sT:7.4f} | "
+        print(f"T={Ti:5d} окно=[{T_SETTLE:.0f},{Ti})  "
+              f"mean={muT:8.4f} s={sT:7.4f} | "
               f"F={F:5.3f} (кр={F_cr:5.3f} → "
               f"{'дисперсии равны' if var_equal else 'дисперсии РАЗНЫЕ'}) | "
               f"{test}: t={tval:6.3f} p={pval:5.3f} → "
               f"{'ОДНОРОДНЫ' if homo else 'различаются'}")
 
     rows.sort(key=lambda r: r["T"])
-    # Т0 — эталонная реплика; Т1 — максимальное Т<Т0, однородное целиком
-    # (равенство дисперсий И средних); Т2 — минимальное Т, при котором ещё
-    # не отвергается равенство средних
-    t1 = max((r["T"] for r in rows if r["var_equal"] and r["homo"]), default=None)
-    t2 = min((r["T"] for r in rows if r["homo"]), default=None)
-    if t1 is not None:
-        print(f"\nТ1={6000} (эталон {Y0_LABEL}); Т1={t1} (однородность по "
-              f"дисперсиям и средним); Т2={t2} (минимум, где среднее ещё "
-              f"не смещено)")
-        print(f"вывод: реплику можно сократить с 6000 до {t1} сек; "
-              f"ниже {t2} сек среднее занижено, уменьшение недопустимо")
+    # T_short: первая длительность, которая однородна вместе со следующим
+    # более длинным кандидатом (защита от одиночного случайного прохода)
+    T_short = None
+    for i, r in enumerate(rows):
+        if not (r["var_equal"] and r["homo"]):
+            continue
+        nxt = rows[i + 1:i + 2]
+        if all(rr["var_equal"] and rr["homo"] for rr in nxt):
+            T_short = r["T"]
+            break
+
+    window = (T_short - T_SETTLE) if T_short is not None else None
+    if T_short is None:
+        print("\nT_short не найден: нет устойчиво однородной длительности")
     else:
-        print(f"\nоднородных точек нет — время реплики сокращать нельзя")
+        print(f"\nT_short = {T_short} сек (полная длительность прогона); "
+              f"окно наблюдения после T0 = {window:.0f} сек")
 
     fig, ax = plt.subplots(figsize=(9, 4.5))
     ts_ = [r["T"] for r in rows]
     ms_ = [r["mu"] for r in rows]
-    err_ = []
-    for r in rows:
-        path = RESULTS / f"lab3_shortened/T{r['T']}_summary.csv"
-        ys = read_Y(path)
-        err_.append(stats.t.ppf(0.975, len(ys) - 1) * r["s"] / math.sqrt(len(ys)))
+    err_ = [stats.t.ppf(0.975, r["n"] - 1) * r["s"] / math.sqrt(r["n"])
+            for r in rows]
     ref_err = stats.t.ppf(0.975, n0 - 1) * s0 / math.sqrt(n0)
     ax.errorbar(ts_, ms_, yerr=err_, fmt="o-", capsize=4,
-                label="{YT}, n=30")
-    ax.errorbar([6000], [mu0], yerr=ref_err, fmt="s", capsize=4,
-                color="red", label="{Y0} (T1=6000, эталон)")
+                label="{YT}, Y на [T0,T]")
+    ax.errorbar([REF_RUN], [mu0], yerr=ref_err, fmt="s", capsize=4,
+                color="red", label=f"{{Y0}} (T={REF_RUN}, эталон)")
     ax.axhline(mu0, color="gray", ls=":")
-    if t1:
-        ax.axvline(t1, color="green", ls=":", alpha=0.8,
-                   label=f"Т1={t1} (однороден целиком)")
-    if t2 and t2 != t1:
-        ax.axvline(t2, color="orange", ls="--", alpha=0.8,
-                   label=f"Т2={t2} (граница смещения среднего)")
-    ax.set_xlabel("T окончания реплики, сек"); ax.set_ylabel("Ȳ, сек")
-    ax.set_title("п.1.4b: однородность выборок при сокращении прогона")
+    if T_short:
+        ax.axvline(T_short, color="green", ls=":", alpha=0.8,
+                   label=f"T_short={T_short} (окно {window:.0f} с)")
+    ax.set_xlabel("T окончания прогона, сек")
+    ax.set_ylabel(f"Ȳ на [{T_SETTLE:.0f},T], сек")
+    ax.set_title(f"п.1.4: сокращение рантайма при T0={T_SETTLE:.0f}")
     ax.legend(fontsize=8); ax.grid(alpha=0.3)
     fig.tight_layout(); fig.savefig(FIGS / "1_4b_shortened.png", dpi=120)
     plt.close(fig)
 
-    return dict(t0=6000, t1=t1, t2=t2, rows=rows)
+    return dict(ref_run=REF_RUN, t0=T_SETTLE, t_short=T_short,
+                window=window, rows=rows)
 
 
-def task_1_5(t0=None, t2=None):
-    """П.1.5: контрольная выборка A=[T0,T2) и B=[T2, 2T2-T0).
-    F-тест дисперсий + t-тест средних. Если однородны — соседние
-    отрезки дают одинаковый Y, «шва» между кусками нет, непрерывный
-    прогон допустим."""
-    if t0 is None:
-        raise RuntimeError("task_1_5: нужен T0 из task_1_4")
-    if t2 is None:
-        raise RuntimeError("task_1_5: нужен T2 из task_1_4b")
+def task_1_5(t_short=None):
+    """П.1.5: однородность средних и дисперсий на 100 участках.
 
-    T0 = int(t0)
-    T2 = int(t2)
-    L  = T2 - T0                # длина отрезка A
-    T3 = T2 + L                 # конец отрезка B
+    После T0=1200 берутся N=100 последовательных участков по
+    W = T_short - T0 секунд. Для каждого участка по значениям
+    Y_interval считаются среднее и выборочная дисперсия.
+    Средние проверяются Welch-ANOVA (справочно — классическая ANOVA),
+    дисперсии — Levene (основной) и Bartlett (справочно).
+    Непрерывный прогон допустим, если однородны и средние, и дисперсии.
+    """
+    if t_short is None:
+        raise RuntimeError("task_1_5: нужен T_short из п.1.4")
 
-    print(f"\n=== 1.5 Непрерывный прогон: A=[T0,T2) vs B=[T2,T3) ===")
-    print(f"T0={T0}, T2={T2}, T3={T3} (длина отрезка {L} сек)")
+    T0 = float(T_SETTLE)
+    W = float(t_short) - T0
+    N = 100
+    if W < MIN_CONTINUOUS_SEGMENT:
+        print(f"п.1.5: окно {W:.0f} сек < {MIN_CONTINUOUS_SEGMENT:.0f} — пропуск")
+        return None
 
+    required = T0 + N * W
     path = RESULTS / "lab3_continuous/continuous_interval.csv"
     if not path.exists():
         print(f"п.1.5: нет {path} — пропуск")
         return None
     data = read_intervals(path)
     reps = sorted(data)
-    print(f"реплик: {len(reps)}")
+    if not reps:
+        print(f"п.1.5: в {path} нет реплик — пропуск")
+        return None
+    if len(reps) != 1:
+        print(f"п.1.5: ожидался один длинный прогон, найдено {len(reps)}; "
+              f"используется реплика {reps[0]}")
+    rep = reps[0]
+    t, yi, _yc, _wc = data[rep]
+    T_end = float(t[-1])
 
-    t_max = max(float(data[r][0][-1]) for r in reps)
-    if T3 > t_max:
-        print(f"п.1.5: T3={T3} > T_max={t_max:.0f}, "
-              f"сокращаю B вдвое (до {T2 + L // 2})")
-        T3 = T2 + L // 2
-        if T3 <= T2:
-            print("п.1.5: B вырожден — пропуск")
-            return None
+    if T_end < required - 1e-9:
+        print(f"п.1.5: данных до {T_end:.0f} сек, нужно {required:.0f} — пропуск")
+        return None
 
-    def y_window(rep, a, b):
-        t, yi, _yc, wc = data[rep]
+    print(f"\n=== 1.5 Однородность средних и дисперсий: "
+          f"{N} участков по {W:.0f} с после T0={T0:.0f} ===")
+    print(f"диапазон: [{T0:.0f},{required:.0f}), данных до {T_end:.0f} сек")
+
+    groups = []
+    rows = []
+    for k in range(N):
+        a = T0 + k * W
+        b = a + W
         m = (t >= a) & (t < b) & ~np.isnan(yi)
-        w = wc[m]
-        return float(np.sum(yi[m] * w) / w.sum()) if w.sum() > 0 else np.nan
+        vals = yi[m]
+        if len(vals) < 2:
+            print(f"п.1.5: в участке {k + 1} меньше двух значений — пропуск")
+            return None
+        groups.append(vals)
+        rows.append(dict(segment=k + 1, start=a, end=b, n=len(vals),
+                         mean=float(np.mean(vals)),
+                         var=float(np.var(vals, ddof=1))))
 
-    A = np.array([y_window(r, T0, T2) for r in reps])
-    B = np.array([y_window(r, T2, T3) for r in reps])
-    ok = ~np.isnan(A) & ~np.isnan(B)
-    A, B = A[ok], B[ok]
-    nA, nB = len(A), len(B)
-    print(f"A=[{T0},{T2}): n={nA}  mean={A.mean():.4f}  s={A.std(ddof=1):.4f}")
-    print(f"B=[{T2},{T3}): n={nB}  mean={B.mean():.4f}  s={B.std(ddof=1):.4f}")
+    mean_values = np.array([r["mean"] for r in rows])
+    var_values = np.array([r["var"] for r in rows])
+    all_values = np.concatenate(groups)
+    overall_mean = float(np.mean(all_values))
+    overall_var = float(np.var(all_values, ddof=1))
+    min_n = min(r["n"] for r in rows)
+    max_n = max(r["n"] for r in rows)
 
-    # F-тест дисперсий
-    vA, vB = A.var(ddof=1), B.var(ddof=1)
-    F = max(vA, vB) / min(vA, vB)
-    v1, v2 = ((nA - 1, nB - 1) if vA >= vB else (nB - 1, nA - 1))
-    F_cr = stats.f.ppf(0.95, v1, v2)
-    var_equal = F <= F_cr
+    # равенство средних: Welch-ANOVA (не требует равенства дисперсий)
+    anova_welch = stats.f_oneway(*groups, equal_var=False)
+    anova_classic = stats.f_oneway(*groups, equal_var=True)
+    # равенство дисперсий: Levene (основной), Bartlett (справочно)
+    leve = stats.levene(*groups, center="median")
+    bart = stats.bartlett(*groups)
 
-    # t-тест средних
-    if var_equal:
-        sv = ((nA - 1) * vA + (nB - 1) * vB) / (nA + nB - 2)
-        t_val = (A.mean() - B.mean()) / math.sqrt(sv * (1 / nA + 1 / nB))
-        dof = nA + nB - 2
-        p_val = 2 * (1 - stats.t.cdf(abs(t_val), dof))
-        test = "t"
-    else:
-        t_val, p_val = stats.ttest_ind(A, B, equal_var=False)
-        test = "Welch"
+    homo_mean = anova_welch.pvalue >= 0.05
+    homo_var = leve.pvalue >= 0.05
+    homo = homo_mean and homo_var
 
-    print(f"F = {F:.4f}, F_кр(0.95,{v1},{v2}) = {F_cr:.4f} → "
-          f"дисперсии {'равны' if var_equal else 'РАЗНЫЕ'}")
-    print(f"{test}: t = {t_val:.4f}, p = {p_val:.4f} → "
-          f"средние {'равны' if p_val >= 0.05 else 'РАЗНЫЕ'}")
+    print(f"значений на участок: min={min_n}, max={max_n}")
+    print(f"средние участков: min={mean_values.min():.4f}, "
+          f"mean={mean_values.mean():.4f}, max={mean_values.max():.4f}; "
+          f"общее={overall_mean:.4f}")
+    print(f"дисперсии участков: min={var_values.min():.4f}, "
+          f"mean={var_values.mean():.4f}, max={var_values.max():.4f}; "
+          f"общая={overall_var:.4f}")
+    print(f"Welch ANOVA: F={anova_welch.statistic:.4f}, "
+          f"p={anova_welch.pvalue:.4f} → "
+          f"средние {'ОДНОРОДНЫ' if homo_mean else 'НЕОДНОРОДНЫ'}")
+    print(f"классическая ANOVA: F={anova_classic.statistic:.4f}, "
+          f"p={anova_classic.pvalue:.4f} (справочно)")
+    print(f"Levene: W={leve.statistic:.4f}, p={leve.pvalue:.4f} → "
+          f"дисперсии {'ОДНОРОДНЫ' if homo_var else 'НЕОДНОРОДНЫ'}")
+    print(f"Bartlett: T={bart.statistic:.4f}, p={bart.pvalue:.4f} "
+          f"(справочно)")
 
-    homo = var_equal and (p_val >= 0.05)
-    print(f"\nГипотеза о возможности непрерывного прогона: "
+    print(f"\nГипотеза об однородности средних и дисперсий: "
           f"{'ПРИНИМАЕТСЯ' if homo else 'ОТВЕРГАЕТСЯ'}")
-    print(f"  (соседние отрезки [{T0},{T2}) и [{T2},{T3}) "
-          f"{'не различаются' if homo else 'различаются'} по Y)")
+    print(f"  непрерывный прогон "
+          f"{'допустим' if homo else 'недопустим'}: "
+          f"средние {'стабильны' if homo_mean else 'меняются'}, "
+          f"дисперсии {'стабильны' if homo_var else 'меняются'} по участкам")
 
-    # график
-    fig, ax = plt.subplots(figsize=(8, 4.5))
-    ax.hist(A, bins=10, alpha=0.5, edgecolor="black",
-            label=f"A: [{T0},{T2}), n={nA}")
-    ax.hist(B, bins=10, alpha=0.5, edgecolor="black",
-            label=f"B: [{T2},{T3}), n={nB}")
-    ax.axvline(A.mean(), color="C0", ls="--", label=f"mean A={A.mean():.2f}")
-    ax.axvline(B.mean(), color="C1", ls="--", label=f"mean B={B.mean():.2f}")
-    ax.set_xlabel("Y по отрезку, сек"); ax.set_ylabel("частота")
-    ax.set_title(f"п.1.5: A=[{T0},{T2}), B=[{T2},{T3}); "
-                 f"F={F:.2f}, p(t)={p_val:.3f}")
-    ax.legend(fontsize=8); ax.grid(alpha=0.3)
+    # таблица дисперсий по участкам
+    seg_path = RESULTS / "lab3_continuous" / "segment_variances.csv"
+    with open(seg_path, "w", newline="") as fh:
+        wr = csv.writer(fh)
+        wr.writerow(["segment", "start", "end", "n", "mean", "variance"])
+        for r in rows:
+            wr.writerow([r["segment"], r["start"], r["end"],
+                         r["n"], r["mean"], r["var"]])
+    print(f"дисперсии по участкам: {seg_path}")
+
+    # график: средние и дисперсии по участкам
+    fig, (ax_mean, ax_var) = plt.subplots(2, 1, figsize=(10, 7.2),
+                                          sharex=True)
+    idx = np.array([r["segment"] for r in rows])
+
+    ax_mean.plot(idx, mean_values, "o-", ms=3.5, lw=1.0,
+                 label="среднее участка")
+    ax_mean.axhline(overall_mean, color="red", ls="--", lw=1.2,
+                    label=f"общее среднее={overall_mean:.2f}")
+    ax_mean.set_ylabel("среднее Y_interval, сек")
+    ax_mean.set_title(f"п.1.5: {N} участков по {W:.0f} с; "
+                      f"Welch ANOVA p={anova_welch.pvalue:.3f}, "
+                      f"Levene p={leve.pvalue:.3f}")
+    ax_mean.legend(fontsize=8); ax_mean.grid(alpha=0.3)
+
+    ax_var.plot(idx, var_values, "o-", ms=3.5, lw=1.0,
+                label="выборочная дисперсия участка")
+    ax_var.axhline(overall_var, color="red", ls="--", lw=1.2,
+                   label=f"общая дисперсия={overall_var:.2f}")
+    ax_var.set_xlabel("номер участка")
+    ax_var.set_ylabel("дисперсия Y_interval, сек²")
+    ax_var.legend(fontsize=8); ax_var.grid(alpha=0.3)
+
     fig.tight_layout(); fig.savefig(FIGS / "1_5_continuous.png", dpi=120)
     plt.close(fig)
 
-    return dict(t0=T0, t2=T2, t3=T3, n=nA,
-                mean_A=A.mean(), mean_B=B.mean(),
-                F=F, F_cr=F_cr, var_equal=var_equal,
-                t=t_val, p=p_val, homo=homo)
+    return dict(t0=T0, t_short=float(t_short), window=W, n_segments=N,
+                n=min_n,
+                mean_stat=float(anova_welch.statistic),
+                mean_p=float(anova_welch.pvalue),
+                mean_stat_classic=float(anova_classic.statistic),
+                mean_p_classic=float(anova_classic.pvalue),
+                levene_stat=float(leve.statistic),
+                levene_p=float(leve.pvalue),
+                bartlett_stat=float(bart.statistic),
+                bartlett_p=float(bart.pvalue),
+                mean_min=float(mean_values.min()),
+                mean_max=float(mean_values.max()),
+                mean_avg=float(mean_values.mean()),
+                overall_mean=overall_mean,
+                var_min=float(var_values.min()),
+                var_max=float(var_values.max()),
+                var_mean=float(var_values.mean()),
+                overall_var=overall_var,
+                homo_mean=homo_mean, homo_var=homo_var,
+                homo=homo, rows=rows)
 
 # ---------- 1.6 ----------
 
@@ -646,11 +692,17 @@ def task_1_6(resdir="lab3_sensitivity", fig_name="1_6_sensitivity.png"):
     xs_m = np.array([r["x"] for r in mid_rows])
     means_m = np.array([r["mean"] for r in mid_rows])
     slope_loc, intercept_loc, r_loc, p_loc, _se = stats.linregress(xs_m, means_m)
-    delta_max = 0.05 * y0 / abs(slope_loc)
+    if abs(slope_loc) < 1e-12:
+        delta_max = math.inf
+        delta_max_text = "не ограничена"
+    else:
+        delta_max = 0.05 * y0 / abs(slope_loc)
+        delta_max_text = f"{delta_max:.4f}"
     print(f"\nрегрессия Y({var}): dY/dx={slope:.2f} "
           f"глобально (R²={r_val ** 2:.3f}, p={p_slope:.4f}); "
           f"локально у x0 dY/dx≈{slope_loc:.2f}")
-    print(f"достаточная точность задания {var} (локально): |Δx| <= {delta_max:.4f} "
+    print(f"достаточная точность задания {var} (локально): "
+          f"|Δx| <= {delta_max_text} "
           f"(иначе ΔY выходит за d=5%)")
 
     sensitive = adj_significant or extremes_significant
@@ -658,7 +710,7 @@ def task_1_6(resdir="lab3_sensitivity", fig_name="1_6_sensitivity.png"):
         f"; значимых различий соседних точек на шкале δ={delta:g} "
         f"{'есть' if adj_significant else 'нет'}, различие крайних точек "
         f"{'значимо' if extremes_significant else 'не значимо'}; достаточная "
-        f"точность задания переменной δ_max≈{delta_max:.4f}")
+        f"точность задания переменной δ_max≈{delta_max_text}")
     print(f"\nИТОГ: к {var} модель "
           + ("ЧУВСТВИТЕЛЬНА" if sensitive else "НЕ ЧУВСТВИТЕЛЬНА")
           + verdict_detail)
@@ -680,18 +732,31 @@ def task_1_6(resdir="lab3_sensitivity", fig_name="1_6_sensitivity.png"):
                label=f"полоса ±d=5% ({d:.1f})")
     ax.set_xlabel(f"{var}"); ax.set_ylabel("Ȳ, сек")
     ax.set_title(f"п.1.6: чувствительность к {var}\n"
-                 f"dY/dx≈{slope_loc:.0f} (лок.), δ_max({var})≈{delta_max:.4f}")
+                 f"dY/dx≈{slope_loc:.0f} (лок.), "
+                 f"δ_max({var})≈{delta_max_text}")
     ax.legend(fontsize=8); ax.grid(alpha=0.3)
     fig.tight_layout(); fig.savefig(FIGS / fig_name, dpi=120)
     plt.close(fig)
 
-    return dict(var=var, rows=rows, y0=y0, d=d, slope=slope,
-                slope_loc=slope_loc, delta_max=delta_max,
+    return dict(var=var, x0=x0, delta=delta, rows=rows,
+                y0=y0, d=d, slope=slope, slope_loc=slope_loc,
+                delta_max=delta_max, delta_max_text=delta_max_text,
                 sensitive=sensitive, p_slope=p_slope)
 
 # ---------- main ----------
 
 Y0_LABEL = "{Y0}"
+
+# Каталоги и графики п.1.6 — порядок совпадает с sensitivity_cases
+# в src/main.cpp. Добавление нового параметра = одна строка здесь.
+SENSITIVITY_CASES = (
+    ("lab3_sens_passage",   "1_6_sensitivity_passage.png"),
+    ("lab3_sens_cinterval", "1_6_sensitivity_cinterval.png"),
+    ("lab3_sens_tgreen",    "1_6_sensitivity_tgreen.png"),
+    ("lab3_sens_tred",      "1_6_sensitivity_tred.png"),
+    ("lab3_sensitivity",    "1_6_sensitivity.png"),
+    ("lab3_sens_lambdab",   "1_6_sensitivity_lambdab.png"),
+)
 
 def main():
     r11 = task_1_1()
@@ -700,18 +765,40 @@ def main():
     r14 = task_1_4()
     r14b = task_1_4b()
 
-    # п.1.5: T0 — из 1.4, T2 — из 1.4b (сокращение)
-    t0_est = r14.get("T_detect")
-    t2_cut = r14b.get("t1") if r14b else None
-    if t0_est is None or t2_cut is None:
-        print("\n1.5: пропуск — T0/T2 не определены "
-              f"(T0={t0_est}, T2={t2_cut})")
+    # п.1.5: T0=1200, T_short — из п.1.4
+    t_short = r14b.get("t_short") if r14b else None
+    if t_short is None:
+        print("\n1.5: пропуск — T_short из п.1.4 не определён")
         r15 = None
     else:
-        r15 = task_1_5(t0_est, t2_cut)
+        r15 = task_1_5(t_short)
 
-    r16_lambda = task_1_6("lab3_sensitivity", "1_6_sensitivity.png")
-    r16_tgreen = task_1_6("lab3_sens_tgreen", "1_6_sensitivity_tgreen.png")
+    # п.1.6: чувствительность ко всем параметрам модели
+    r16 = [task_1_6(resdir, fig_name)
+           for resdir, fig_name in SENSITIVITY_CASES]
+
+    # сводка по всем параметрам — в консоль и в CSV
+    print("\n=== 1.6 Сводка чувствительности по всем параметрам ===")
+    print(f"{'параметр':<16}{'x0':>10}{'δ':>8}{'dY/dx':>12}"
+          f"{'δ_max':>12}  вывод")
+    for r in r16:
+        print(f"{r['var']:<16}{r['x0']:>10.4g}{r['delta']:>8.4g}"
+              f"{r['slope_loc']:>12.4g}{r['delta_max_text']:>12}  "
+              f"{'чувствительна' if r['sensitive'] else 'не чувствительна'}")
+
+    summary_path = RESULTS / "lab3_sensitivity_summary.csv"
+    with open(summary_path, "w", newline="") as fh:
+        wr = csv.writer(fh)
+        wr.writerow(["variable", "x0", "delta", "y0", "dY_dx_global",
+                     "dY_dx_local", "delta_max", "sensitive"])
+        for r in r16:
+            wr.writerow([
+                r["var"], r["x0"], r["delta"], r["y0"],
+                r["slope"], r["slope_loc"],
+                "inf" if math.isinf(r["delta_max"]) else r["delta_max"],
+                int(r["sensitive"]),
+            ])
+    print(f"сводка сохранена: {summary_path}")
 
     print("\n=== ИТОГ ===")
     print(f"1.1: нормальность "
@@ -719,18 +806,21 @@ def main():
     print(f"1.2: Ȳ={r12['mu']:.3f}; t-ДИ=[{r12['lo']:.3f}; {r12['hi']:.3f}]; "
           f"Уиллинк=[{r12['wl']:.3f}; {r12['wh']:.3f}]")
     print(f"1.3: n*≈{r13['n_star']} (точность 5%)")
-    tper = (f"{r14['T_detect']:.0f}"
-            if r14['T_detect'] is not None else "?")
-    print(f"1.4: T0≈{tper} сек (установление)")
-    if r14b:
-        print(f"1.4b: T1={6000} (эталон), T2={r14b['t1']} (сокращение)")
+    if r14b and r14b.get("t_short") is not None:
+        print(f"1.4: T0={T_SETTLE:.0f} (принято), "
+              f"T_short={r14b['t_short']} сек, "
+              f"окно после T0={r14b['window']:.0f} сек")
+    else:
+        print(f"1.4: T0={T_SETTLE:.0f} (принято), T_short не найден")
     if r15 is not None:
-        print(f"1.5: непрерывный прогон "
-              f"{'ДОПУСТИМ' if r15['homo'] else 'НЕ ДОПУСТИМ'} "
-              f"(F={r15['F']:.2f}, p(t)={r15['p']:.3f}, n={r15['n']})")
-    for r16 in (r16_lambda, r16_tgreen):
-        print(f"1.6: {r16['var']}: δ_max≈{r16['delta_max']:.4f} → "
-              f"{'чувствительна' if r16['sensitive'] else 'не чувствительна'}")
+        print(f"1.5: {r15['n_segments']} участков по {r15['window']:.0f} с: "
+              f"средние Welch p={r15['mean_p']:.3f}, "
+              f"дисперсии Levene p={r15['levene_p']:.3f}, "
+              f"Bartlett p={r15['bartlett_p']:.3f} → "
+              f"{'средние и дисперсии однородны, непрерывный прогон допустим' if r15['homo'] else 'средние и/или дисперсии неоднородны, непрерывный прогон недопустим'}")
+    for r in r16:
+        print(f"1.6: {r['var']}: δ_max≈{r['delta_max_text']} → "
+              f"{'чувствительна' if r['sensitive'] else 'не чувствительна'}")
     print(f"\nграфики: {FIGS}")
 
 
