@@ -381,7 +381,7 @@ def task_1_4b():
     ref = read_Y(RESULTS / "lab3_shortened/T6000_summary.csv")
     n0 = len(ref)
     mu0, s0 = ref.mean(), ref.std(ddof=1)
-    print(f"эталон {Y0_LABEL}: T0=6000, n={n0}, mean={mu0:.4f}, s={s0:.4f}")
+    print(f"эталон {Y0_LABEL}: T1=6000, n={n0}, mean={mu0:.4f}, s={s0:.4f}")
 
     rows = []
     for path in sorted((RESULTS / "lab3_shortened").glob("T*_summary.csv")):
@@ -424,7 +424,7 @@ def task_1_4b():
     t1 = max((r["T"] for r in rows if r["var_equal"] and r["homo"]), default=None)
     t2 = min((r["T"] for r in rows if r["homo"]), default=None)
     if t1 is not None:
-        print(f"\nТ0={6000} (эталон {Y0_LABEL}); Т1={t1} (однородность по "
+        print(f"\nТ1={6000} (эталон {Y0_LABEL}); Т1={t1} (однородность по "
               f"дисперсиям и средним); Т2={t2} (минимум, где среднее ещё "
               f"не смещено)")
         print(f"вывод: реплику можно сократить с 6000 до {t1} сек; "
@@ -444,7 +444,7 @@ def task_1_4b():
     ax.errorbar(ts_, ms_, yerr=err_, fmt="o-", capsize=4,
                 label="{YT}, n=30")
     ax.errorbar([6000], [mu0], yerr=ref_err, fmt="s", capsize=4,
-                color="red", label="{Y0} (T0=6000, эталон)")
+                color="red", label="{Y0} (T1=6000, эталон)")
     ax.axhline(mu0, color="gray", ls=":")
     if t1:
         ax.axvline(t1, color="green", ls=":", alpha=0.8,
@@ -461,26 +461,40 @@ def task_1_4b():
     return dict(t0=6000, t1=t1, t2=t2, rows=rows)
 
 
-def task_1_5(t0=None, t1=None):
-    """Гипотеза о возможности непрерывного прогона (постановка препода):
-    сравниваем выборки {Y} на соседних отрезках [T0, T1) и [T1, T2) —
-    F-тест дисперсий + t-тест средних. Если однородны, «шва» между
-    репликами нет, непрерывный прогон допустим.
-    """
+def task_1_5(t0=None, t2=None):
+    """П.1.5: контрольная выборка A=[T0,T2) и B=[T2, 2T2-T0).
+    F-тест дисперсий + t-тест средних. Если однородны — соседние
+    отрезки дают одинаковый Y, «шва» между кусками нет, непрерывный
+    прогон допустим."""
     if t0 is None:
         raise RuntimeError("task_1_5: нужен T0 из task_1_4")
-    if t1 is None:
-        raise RuntimeError("task_1_5: нужен T1 из task_1_4")
+    if t2 is None:
+        raise RuntimeError("task_1_5: нужен T2 из task_1_4b")
 
-    T0, T1 = int(t0), int(t1)
-    T2 = T1 + (T1 - T0)              # соседний отрезок той же длины
+    T0 = int(t0)
+    T2 = int(t2)
+    L  = T2 - T0                # длина отрезка A
+    T3 = T2 + L                 # конец отрезка B
 
-    print(f"\n=== 1.5 Непрерывный прогон: [T0,T1) vs [T1,T2) ===")
-    print(f"T0={T0}, T1={T1}, T2={T2} (длина отрезка {T1 - T0} сек)")
+    print(f"\n=== 1.5 Непрерывный прогон: A=[T0,T2) vs B=[T2,T3) ===")
+    print(f"T0={T0}, T2={T2}, T3={T3} (длина отрезка {L} сек)")
 
-    data = read_intervals(RESULTS / "lab3_continuous/continuous_interval.csv")
+    path = RESULTS / "lab3_continuous/continuous_interval.csv"
+    if not path.exists():
+        print(f"п.1.5: нет {path} — пропуск")
+        return None
+    data = read_intervals(path)
     reps = sorted(data)
     print(f"реплик: {len(reps)}")
+
+    t_max = max(float(data[r][0][-1]) for r in reps)
+    if T3 > t_max:
+        print(f"п.1.5: T3={T3} > T_max={t_max:.0f}, "
+              f"сокращаю B вдвое (до {T2 + L // 2})")
+        T3 = T2 + L // 2
+        if T3 <= T2:
+            print("п.1.5: B вырожден — пропуск")
+            return None
 
     def y_window(rep, a, b):
         t, yi, _yc, wc = data[rep]
@@ -488,58 +502,59 @@ def task_1_5(t0=None, t1=None):
         w = wc[m]
         return float(np.sum(yi[m] * w) / w.sum()) if w.sum() > 0 else np.nan
 
-    A = np.array([y_window(r, T0, T1) for r in reps])
-    B = np.array([y_window(r, T1, T2) for r in reps])
+    A = np.array([y_window(r, T0, T2) for r in reps])
+    B = np.array([y_window(r, T2, T3) for r in reps])
     ok = ~np.isnan(A) & ~np.isnan(B)
     A, B = A[ok], B[ok]
-    print(f"n_A={len(A)}  mean_A={A.mean():.4f}  s_A={A.std(ddof=1):.4f}")
-    print(f"n_B={len(B)}  mean_B={B.mean():.4f}  s_B={B.std(ddof=1):.4f}")
+    nA, nB = len(A), len(B)
+    print(f"A=[{T0},{T2}): n={nA}  mean={A.mean():.4f}  s={A.std(ddof=1):.4f}")
+    print(f"B=[{T2},{T3}): n={nB}  mean={B.mean():.4f}  s={B.std(ddof=1):.4f}")
 
     # F-тест дисперсий
-    F = max(A.var(ddof=1), B.var(ddof=1)) / min(A.var(ddof=1), B.var(ddof=1))
-    v1, v2 = ((len(A) - 1, len(B) - 1) if A.var(ddof=1) >= B.var(ddof=1)
-              else (len(B) - 1, len(A) - 1))
+    vA, vB = A.var(ddof=1), B.var(ddof=1)
+    F = max(vA, vB) / min(vA, vB)
+    v1, v2 = ((nA - 1, nB - 1) if vA >= vB else (nB - 1, nA - 1))
     F_cr = stats.f.ppf(0.95, v1, v2)
     var_equal = F <= F_cr
 
     # t-тест средних
     if var_equal:
-        sv = ((len(A) - 1) * A.var(ddof=1) + (len(B) - 1) * B.var(ddof=1)) \
-             / (len(A) + len(B) - 2)
-        t_val = (A.mean() - B.mean()) / math.sqrt(sv * (1/len(A) + 1/len(B)))
-        dof = len(A) + len(B) - 2
+        sv = ((nA - 1) * vA + (nB - 1) * vB) / (nA + nB - 2)
+        t_val = (A.mean() - B.mean()) / math.sqrt(sv * (1 / nA + 1 / nB))
+        dof = nA + nB - 2
         p_val = 2 * (1 - stats.t.cdf(abs(t_val), dof))
         test = "t"
     else:
         t_val, p_val = stats.ttest_ind(A, B, equal_var=False)
         test = "Welch"
 
-    print(f"F = {F:.4f}, F_cr = {F_cr:.4f} → "
+    print(f"F = {F:.4f}, F_кр(0.95,{v1},{v2}) = {F_cr:.4f} → "
           f"дисперсии {'равны' if var_equal else 'РАЗНЫЕ'}")
     print(f"{test}: t = {t_val:.4f}, p = {p_val:.4f} → "
           f"средние {'равны' if p_val >= 0.05 else 'РАЗНЫЕ'}")
 
-    homo = (p_val >= 0.05)
+    homo = var_equal and (p_val >= 0.05)
     print(f"\nГипотеза о возможности непрерывного прогона: "
           f"{'ПРИНИМАЕТСЯ' if homo else 'ОТВЕРГАЕТСЯ'}")
-    print(f"  (соседние отрезки [T0,T1) и [T1,T2) "
+    print(f"  (соседние отрезки [{T0},{T2}) и [{T2},{T3}) "
           f"{'не различаются' if homo else 'различаются'} по Y)")
 
     # график
     fig, ax = plt.subplots(figsize=(8, 4.5))
-    ax.hist(A, bins=10, alpha=0.5, label=f"A: [{T0},{T1})", edgecolor="black")
-    ax.hist(B, bins=10, alpha=0.5, label=f"B: [{T1},{T2})", edgecolor="black")
+    ax.hist(A, bins=10, alpha=0.5, edgecolor="black",
+            label=f"A: [{T0},{T2}), n={nA}")
+    ax.hist(B, bins=10, alpha=0.5, edgecolor="black",
+            label=f"B: [{T2},{T3}), n={nB}")
     ax.axvline(A.mean(), color="C0", ls="--", label=f"mean A={A.mean():.2f}")
     ax.axvline(B.mean(), color="C1", ls="--", label=f"mean B={B.mean():.2f}")
-    ax.set_xlabel("Y по отрезку, сек")
-    ax.set_ylabel("частота")
-    ax.set_title(f"п.1.5: A=[{T0},{T1}), B=[{T1},{T2}); "
+    ax.set_xlabel("Y по отрезку, сек"); ax.set_ylabel("частота")
+    ax.set_title(f"п.1.5: A=[{T0},{T2}), B=[{T2},{T3}); "
                  f"F={F:.2f}, p(t)={p_val:.3f}")
     ax.legend(fontsize=8); ax.grid(alpha=0.3)
     fig.tight_layout(); fig.savefig(FIGS / "1_5_continuous.png", dpi=120)
     plt.close(fig)
 
-    return dict(t0=T0, t1=T1, t2=T2, n=len(A),
+    return dict(t0=T0, t2=T2, t3=T3, n=nA,
                 mean_A=A.mean(), mean_B=B.mean(),
                 F=F, F_cr=F_cr, var_equal=var_equal,
                 t=t_val, p=p_val, homo=homo)
@@ -685,49 +700,39 @@ def main():
     r14 = task_1_4()
     r14b = task_1_4b()
 
-    # п.1.5 использует T0 и T1 из п.1.4
+    # п.1.5: T0 — из 1.4, T2 — из 1.4b (сокращение)
     t0_est = r14.get("T_detect")
-    t1_stable = r14.get("first_stationary")
-    if t0_est is None or t1_stable is None:
-        print("\n1.5: пропуск — T0/T1 из 1.4 не найдены")
+    t2_cut = r14b.get("t1") if r14b else None
+    if t0_est is None or t2_cut is None:
+        print("\n1.5: пропуск — T0/T2 не определены "
+              f"(T0={t0_est}, T2={t2_cut})")
         r15 = None
     else:
-        if t1_stable <= t0_est:
-            t1_stable = int(t0_est) + 1200
-        r15 = task_1_5(t0_est, t1_stable)
+        r15 = task_1_5(t0_est, t2_cut)
 
     r16_lambda = task_1_6("lab3_sensitivity", "1_6_sensitivity.png")
     r16_tgreen = task_1_6("lab3_sens_tgreen", "1_6_sensitivity_tgreen.png")
 
     print("\n=== ИТОГ ===")
-    # ... (как у вас) ...
+    print(f"1.1: нормальность "
+          f"{'ПРИНЯТА' if r11['accepted'] else 'ОТВЕРГНУТА'}")
+    print(f"1.2: Ȳ={r12['mu']:.3f}; t-ДИ=[{r12['lo']:.3f}; {r12['hi']:.3f}]; "
+          f"Уиллинк=[{r12['wl']:.3f}; {r12['wh']:.3f}]")
+    print(f"1.3: n*≈{r13['n_star']} (точность 5%)")
+    tper = (f"{r14['T_detect']:.0f}"
+            if r14['T_detect'] is not None else "?")
+    print(f"1.4: T0≈{tper} сек (установление)")
+    if r14b:
+        print(f"1.4b: T1={6000} (эталон), T2={r14b['t1']} (сокращение)")
     if r15 is not None:
         print(f"1.5: непрерывный прогон "
               f"{'ДОПУСТИМ' if r15['homo'] else 'НЕ ДОПУСТИМ'} "
-              f"(F={r15['F']:.2f}, Fкр={r15['F_cr']:.2f}, "
-              f"p(t)={r15['p']:.3f}, n={r15['n']})")
-    else:
-        print("1.5: не выполнен (нет T0/T1)")
-
-    print("\n=== ИТОГ ===")
-    print(f"1.1: нормальность {'ПРИНЯТА' if r11['accepted'] else 'ОТВЕРГНУТА'} "
-          f"→ интервальная оценка — Уиллинк")
-    print(f"1.2: Ȳ={r12['mu']:.3f}; t-ДИ=[{r12['lo']:.3f}; {r12['hi']:.3f}]; "
-          f"ДИ Уиллинка=[{r12['wl']:.3f}; {r12['wh']:.3f}]")
-    print(f"1.3: n*≈{r13['n_star']} (точность 5%)")
-    tper = (f"{r14['T_detect']:.0f}" if r14['T_detect'] is not None else "?")
-    lvl = (f"{r14['steady_level']:.1f}"
-           if np.isfinite(r14.get('steady_level', np.nan)) else "?")
-    print(f"1.4: T_пер≈{tper} сек; уровень после T_пер ≈{lvl} сек")
-    t1 = r14b['t1']; t2 = r14b['t2']
-    print(f"1.4b: Т1={r14b['t0']}, Т2={t1}, Т0={t2} сек → "
-          + (f"реплику можно сократить до {t1} сек"
-             if t1 else "время реплики сокращать нельзя"))
+              f"(F={r15['F']:.2f}, p(t)={r15['p']:.3f}, n={r15['n']})")
     for r16 in (r16_lambda, r16_tgreen):
-        print(f"1.6: {r16['var']}: dY/dx(лок у x0)={r16['slope_loc']:.1f}; "
-              f"δ_max≈{r16['delta_max']:.4f} → "
+        print(f"1.6: {r16['var']}: δ_max≈{r16['delta_max']:.4f} → "
               f"{'чувствительна' if r16['sensitive'] else 'не чувствительна'}")
     print(f"\nграфики: {FIGS}")
+
 
 if __name__ == "__main__":
     main()
