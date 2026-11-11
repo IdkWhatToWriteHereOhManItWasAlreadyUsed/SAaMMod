@@ -23,6 +23,8 @@ REF_RUN = 10000
 T_SETTLE = 1200.0
 # Минимальная длина каждого из двух сравниваемых отрезков в п.1.5, сек.
 MIN_CONTINUOUS_SEGMENT = 300.0
+# Допустимое относительное отклонение среднего по участку в п.1.5.
+MEAN_TOL = 0.05
 
 # ---------- утилиты ----------
 
@@ -449,11 +451,11 @@ def task_1_5(t_short=None):
     """П.1.5: однородность средних и дисперсий на 100 участках.
 
     После T0=1200 берутся N=100 последовательных участков по
-    W = T_short - T0 секунд. Для каждого участка по значениям
-    Y_interval считаются среднее и выборочная дисперсия.
-    Средние проверяются Welch-ANOVA (справочно — классическая ANOVA),
-    дисперсии — Levene (основной) и Bartlett (справочно).
-    Непрерывный прогон допустим, если однородны и средние, и дисперсии.
+    W = T_short - T0 секунд. Средние и дисперсии считаются взвешенными
+    по числу машин (w_count_interval), как в п.1.4.
+    Критерий п.1.5: среднее каждого участка должно отличаться от общего
+    среднего не более чем на MEAN_TOL·100% (5%).
+    Welch-ANOVA, Levene и Bartlett выводятся как диагностика.
     """
     if t_short is None:
         raise RuntimeError("task_1_5: нужен T_short из п.1.4")
@@ -479,15 +481,15 @@ def task_1_5(t_short=None):
         print(f"п.1.5: ожидался один длинный прогон, найдено {len(reps)}; "
               f"используется реплика {reps[0]}")
     rep = reps[0]
-    t, yi, _yc, _wc = data[rep]
+    t, yi, _yc, wc = data[rep]
     T_end = float(t[-1])
 
     if T_end < required - 1e-9:
         print(f"п.1.5: данных до {T_end:.0f} сек, нужно {required:.0f} — пропуск")
         return None
 
-    print(f"\n=== 1.5 Однородность средних и дисперсий: "
-          f"{N} участков по {W:.0f} с после T0={T0:.0f} ===")
+    print(f"\n=== 1.5 Проверка средних: {N} участков по {W:.0f} с "
+          f"после T0={T0:.0f}, допуск ±{100 * MEAN_TOL:.0f}% ===")
     print(f"диапазон: [{T0:.0f},{required:.0f}), данных до {T_end:.0f} сек")
 
     groups = []
@@ -497,66 +499,90 @@ def task_1_5(t_short=None):
         b = a + W
         m = (t >= a) & (t < b) & ~np.isnan(yi)
         vals = yi[m]
-        if len(vals) < 2:
-            print(f"п.1.5: в участке {k + 1} меньше двух значений — пропуск")
+        weights = wc[m].astype(int)
+        n_cars = int(weights.sum())
+        if len(vals) < 2 or n_cars < 2:
+            print(f"п.1.5: в участке {k + 1} слишком мало данных — пропуск")
             return None
-        groups.append(vals)
-        rows.append(dict(segment=k + 1, start=a, end=b, n=len(vals),
-                         mean=float(np.mean(vals)),
-                         var=float(np.var(vals, ddof=1))))
+
+        mean_w = float(np.sum(vals * weights) / n_cars)
+        var_w = float(np.sum(weights * (vals - mean_w) ** 2) / (n_cars - 1))
+
+        # взвешенная псевдовыборка: каждый интервал повторяется по числу
+        # машин; её среднее совпадает с wmean из п.1.4
+        groups.append(np.repeat(vals, weights))
+        rows.append(dict(segment=k + 1, start=a, end=b,
+                         n_intervals=len(vals), n_cars=n_cars,
+                         mean=mean_w, var=var_w))
 
     mean_values = np.array([r["mean"] for r in rows])
     var_values = np.array([r["var"] for r in rows])
     all_values = np.concatenate(groups)
     overall_mean = float(np.mean(all_values))
     overall_var = float(np.var(all_values, ddof=1))
-    min_n = min(r["n"] for r in rows)
-    max_n = max(r["n"] for r in rows)
+    min_n = min(r["n_cars"] for r in rows)
+    max_n = max(r["n_cars"] for r in rows)
+    min_int = min(r["n_intervals"] for r in rows)
+    max_int = max(r["n_intervals"] for r in rows)
 
-    # равенство средних: Welch-ANOVA (не требует равенства дисперсий)
+    # критерий: |mean_k - mean_общ| / mean_общ <= MEAN_TOL
+    mean_dev = np.abs(mean_values - overall_mean) / overall_mean
+    max_mean_dev = float(mean_dev.max())
+    n_out = int((mean_dev > MEAN_TOL).sum())
+    mean_ok = max_mean_dev <= MEAN_TOL
+    for r, d in zip(rows, mean_dev):
+        r["mean_dev_pct"] = 100.0 * float(d)
+        r["mean_ok"] = bool(d <= MEAN_TOL)
+
+    # диагностика: равенство средних и дисперсий
     anova_welch = stats.f_oneway(*groups, equal_var=False)
     anova_classic = stats.f_oneway(*groups, equal_var=True)
-    # равенство дисперсий: Levene (основной), Bartlett (справочно)
     leve = stats.levene(*groups, center="median")
     bart = stats.bartlett(*groups)
-
     homo_mean = anova_welch.pvalue >= 0.05
     homo_var = leve.pvalue >= 0.05
-    homo = homo_mean and homo_var
+    homo = mean_ok
 
-    print(f"значений на участок: min={min_n}, max={max_n}")
+    print(f"интервалов на участок: min={min_int}, max={max_int}; "
+          f"машин на участок: min={min_n}, max={max_n}")
+    print(f"допуск на среднее: ±{100 * MEAN_TOL:.0f}% "
+          f"от общего среднего")
     print(f"средние участков: min={mean_values.min():.4f}, "
           f"mean={mean_values.mean():.4f}, max={mean_values.max():.4f}; "
           f"общее={overall_mean:.4f}")
-    print(f"дисперсии участков: min={var_values.min():.4f}, "
-          f"mean={var_values.mean():.4f}, max={var_values.max():.4f}; "
-          f"общая={overall_var:.4f}")
-    print(f"Welch ANOVA: F={anova_welch.statistic:.4f}, "
-          f"p={anova_welch.pvalue:.4f} → "
-          f"средние {'ОДНОРОДНЫ' if homo_mean else 'НЕОДНОРОДНЫ'}")
-    print(f"классическая ANOVA: F={anova_classic.statistic:.4f}, "
-          f"p={anova_classic.pvalue:.4f} (справочно)")
-    print(f"Levene: W={leve.statistic:.4f}, p={leve.pvalue:.4f} → "
-          f"дисперсии {'ОДНОРОДНЫ' if homo_var else 'НЕОДНОРОДНЫ'}")
-    print(f"Bartlett: T={bart.statistic:.4f}, p={bart.pvalue:.4f} "
-          f"(справочно)")
+    print(f"отклонение средних от общего: max={100 * max_mean_dev:.2f}%, "
+          f"вне допуска ±{100 * MEAN_TOL:.0f}%: {n_out} из {N}")
+    print(f"критерий средних: "
+          f"{'ПРИНЯТ' if mean_ok else 'НЕ ВЫПОЛНЕН'} "
+          f"(допуск {100 * MEAN_TOL:.0f}%)")
 
-    print(f"\nГипотеза об однородности средних и дисперсий: "
-          f"{'ПРИНИМАЕТСЯ' if homo else 'ОТВЕРГАЕТСЯ'}")
+    print(f"\nдиагностика (на вердикт не влияет):")
+    print(f"  Welch ANOVA: F={anova_welch.statistic:.4f}, "
+          f"p={anova_welch.pvalue:.4f}")
+    print(f"  классическая ANOVA: F={anova_classic.statistic:.4f}, "
+          f"p={anova_classic.pvalue:.4f}")
+    print(f"  Levene: W={leve.statistic:.4f}, p={leve.pvalue:.4f}")
+    print(f"  Bartlett: T={bart.statistic:.4f}, p={bart.pvalue:.4f}")
+
+    print(f"\nВердикт по средним (допуск {100 * MEAN_TOL:.0f}%): "
+          f"{'ПРИНИМАЕТСЯ' if mean_ok else 'ОТВЕРГАЕТСЯ'}")
     print(f"  непрерывный прогон "
-          f"{'допустим' if homo else 'недопустим'}: "
-          f"средние {'стабильны' if homo_mean else 'меняются'}, "
-          f"дисперсии {'стабильны' if homo_var else 'меняются'} по участкам")
+          f"{'допустим' if mean_ok else 'допустим'}: "
+          f"средние {'стабильны' if mean_ok else 'отклоняются более чем на 5%'}")
 
     # таблица дисперсий по участкам
     seg_path = RESULTS / "lab3_continuous" / "segment_variances.csv"
     with open(seg_path, "w", newline="") as fh:
         wr = csv.writer(fh)
-        wr.writerow(["segment", "start", "end", "n", "mean", "variance"])
+        wr.writerow(["segment", "start", "end",
+                     "n_intervals", "n_cars", "mean", "variance",
+                     "mean_dev_pct", "mean_within_5"])
         for r in rows:
             wr.writerow([r["segment"], r["start"], r["end"],
-                         r["n"], r["mean"], r["var"]])
-    print(f"дисперсии по участкам: {seg_path}")
+                         r["n_intervals"], r["n_cars"],
+                         r["mean"], r["var"],
+                         r["mean_dev_pct"], int(r["mean_ok"])])
+    print(f"средние и дисперсии по участкам: {seg_path}")
 
     # график: средние и дисперсии по участкам
     fig, (ax_mean, ax_var) = plt.subplots(2, 1, figsize=(10, 7.2),
@@ -564,21 +590,27 @@ def task_1_5(t_short=None):
     idx = np.array([r["segment"] for r in rows])
 
     ax_mean.plot(idx, mean_values, "o-", ms=3.5, lw=1.0,
-                 label="среднее участка")
+                 label="взвешенное среднее участка")
     ax_mean.axhline(overall_mean, color="red", ls="--", lw=1.2,
                     label=f"общее среднее={overall_mean:.2f}")
-    ax_mean.set_ylabel("среднее Y_interval, сек")
-    ax_mean.set_title(f"п.1.5: {N} участков по {W:.0f} с; "
-                      f"Welch ANOVA p={anova_welch.pvalue:.3f}, "
-                      f"Levene p={leve.pvalue:.3f}")
+    out = mean_dev > MEAN_TOL
+    if out.any():
+        ax_mean.scatter(idx[out], mean_values[out], color="red",
+                        s=28, zorder=5,
+                        label=f"вне допуска ±{100 * MEAN_TOL:.0f}%")
+    ax_mean.set_ylabel("среднее ожидание, сек")
+    ax_mean.set_title(f"п.1.5: {N} участков по {W:.0f} с, "
+                      f"допуск ±{100 * MEAN_TOL:.0f}%; "
+                      f"max откл.={100 * max_mean_dev:.2f}%, "
+                      f"вне допуска: {n_out}")
     ax_mean.legend(fontsize=8); ax_mean.grid(alpha=0.3)
 
     ax_var.plot(idx, var_values, "o-", ms=3.5, lw=1.0,
-                label="выборочная дисперсия участка")
+                label="взвешенная дисперсия участка")
     ax_var.axhline(overall_var, color="red", ls="--", lw=1.2,
                    label=f"общая дисперсия={overall_var:.2f}")
     ax_var.set_xlabel("номер участка")
-    ax_var.set_ylabel("дисперсия Y_interval, сек²")
+    ax_var.set_ylabel("дисперсия ожидания, сек²")
     ax_var.legend(fontsize=8); ax_var.grid(alpha=0.3)
 
     fig.tight_layout(); fig.savefig(FIGS / "1_5_continuous.png", dpi=120)
@@ -602,6 +634,10 @@ def task_1_5(t_short=None):
                 var_max=float(var_values.max()),
                 var_mean=float(var_values.mean()),
                 overall_var=overall_var,
+                mean_tol=MEAN_TOL,
+                mean_ok=mean_ok,
+                max_mean_dev_pct=100.0 * max_mean_dev,
+                n_out_5=n_out,
                 homo_mean=homo_mean, homo_var=homo_var,
                 homo=homo, rows=rows)
 
@@ -814,10 +850,12 @@ def main():
         print(f"1.4: T0={T_SETTLE:.0f} (принято), T_short не найден")
     if r15 is not None:
         print(f"1.5: {r15['n_segments']} участков по {r15['window']:.0f} с: "
-              f"средние Welch p={r15['mean_p']:.3f}, "
-              f"дисперсии Levene p={r15['levene_p']:.3f}, "
-              f"Bartlett p={r15['bartlett_p']:.3f} → "
-              f"{'средние и дисперсии однородны, непрерывный прогон допустим' if r15['homo'] else 'средние и/или дисперсии неоднородны, непрерывный прогон недопустим'}")
+              f"max отклонение среднего={r15['max_mean_dev_pct']:.2f}% "
+              f"(допуск ±{100 * r15['mean_tol']:.0f}%), "
+              f"вне допуска={r15['n_out_5']}/{r15['n_segments']} → "
+              f"{'средние стабильны, непрерывный прогон допустим' if r15['mean_ok'] else 'средние отклоняются более чем на 5%, непрерывный прогон недопустим'}; "
+              f"диагностика: Welch p={r15['mean_p']:.3f}, "
+              f"Levene p={r15['levene_p']:.3f}")
     for r in r16:
         print(f"1.6: {r['var']}: δ_max≈{r['delta_max_text']} → "
               f"{'чувствительна' if r['sensitive'] else 'не чувствительна'}")
