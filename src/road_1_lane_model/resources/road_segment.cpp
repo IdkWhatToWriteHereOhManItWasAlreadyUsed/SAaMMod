@@ -1,13 +1,32 @@
 #include "road_segment.h"
 #include "road_1_lane_model/agents/car.h"
 
+#include <algorithm>
+
 namespace resources
 {
     road_segment::road_segment(double_t passage_time, double_t cars_interval)
      : passage_time_(passage_time)
      , cars_interval_(cars_interval)
-     , capacity_(static_cast<int>(passage_time / cars_interval))
     {
+        update_capacity();
+    }
+
+    void road_segment::update_capacity()
+    {
+        capacity_ = std::max(1, static_cast<int>(passage_time_ / cars_interval_));
+    }
+
+    void road_segment::set_passage_time(const double_t passage_time)
+    {
+        passage_time_ = passage_time;
+        update_capacity();
+    }
+
+    void road_segment::set_cars_interval(const double_t cars_interval)
+    {
+        cars_interval_ = cars_interval;
+        update_capacity();
     }
 
     void road_segment::reset()

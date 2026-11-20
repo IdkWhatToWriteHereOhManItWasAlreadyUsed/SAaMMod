@@ -22,6 +22,9 @@ namespace agents
                       agents::traffic_light& light);
         int id() const override;
         void spawn_car(runner::i_run& run);
+
+        // Новая интенсивность применяется к следующему интервалу появления.
+        void set_frequency(double_t frequency);
     private:
         char direction_;
         double_t frequency_;

@@ -1,5 +1,6 @@
 #include "road_1_lane_model.h"
 
+#include <cmath>
 #include <fstream>
 #include <stdexcept>
 #include <iostream>
@@ -72,6 +73,70 @@ void road_1_lane_model::reset(runner::i_run& run)
         [this](runner::i_run& r) { car_generator_a_->spawn_car(r); },
         rng_.exponential(config_.lambda_a)
     );
+
+    for (const auto& ramp : ramps_)
+    {
+        ramp->start(run);
+    }
+}
+
+bool road_1_lane_model::set_parameter(const std::string_view name,
+                                      const double_t value)
+{
+    if (!std::isfinite(value) || value <= 0.0)
+    {
+        return false;
+    }
+
+    if (name == "passage_time")
+    {
+        config_.passage_time = value;
+        road_segment_.set_passage_time(value);
+        return true;
+    }
+    if (name == "cars_interval")
+    {
+        config_.cars_interval = value;
+        road_segment_.set_cars_interval(value);
+        return true;
+    }
+    if (name == "t_green")
+    {
+        config_.t_green = value;
+        traffic_light_->set_t_green(value);
+        return true;
+    }
+    if (name == "t_red")
+    {
+        config_.t_red = value;
+        traffic_light_->set_t_red(value);
+        return true;
+    }
+    if (name == "lambda_a")
+    {
+        config_.lambda_a = value;
+        car_generator_a_->set_frequency(value);
+        return true;
+    }
+    if (name == "lambda_b")
+    {
+        config_.lambda_b = value;
+        car_generator_b_->set_frequency(value);
+        return true;
+    }
+
+    return false;
+}
+
+void road_1_lane_model::add_parameter_ramp(const std::string& parameter,
+                                           const double_t start,
+                                           const double_t step,
+                                           const double_t interval,
+                                           const double_t until,
+                                           const std::string& log_path)
+{
+    ramps_.push_back(std::make_shared<runner::parameter_ramp>(
+        *this, parameter, start, step, interval, until, log_path));
 }
 
 void road_1_lane_model::stop(runner::i_run& run)

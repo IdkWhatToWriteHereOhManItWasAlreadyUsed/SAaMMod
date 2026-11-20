@@ -6,12 +6,14 @@ set(CMAKE_CXX_STANDARD 20)
 add_library(${PROJECT_NAME}
         # .cpp
         impl/run_base.cpp
+        impl/parameter_ramp.cpp
         # headers (для IDE)
         public/event.h
         public/i_agent.h
         public/i_model.h
         public/i_run.h
         public/i_runner.h
+        public/parameter_ramp.h
         public/run_base.h
 )
 

@@ -20,6 +20,11 @@ namespace agents
 
     int car_generator::id() const { return 0; }
 
+    void car_generator::set_frequency(const double_t frequency)
+    {
+        frequency_ = frequency;
+    }
+
     void car_generator::spawn_car(runner::i_run& run)
     {
         static int next_id = 0;

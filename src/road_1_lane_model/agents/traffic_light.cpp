@@ -20,6 +20,9 @@ namespace agents
 
     char traffic_light::phase() const { return phase_; }
 
+    void traffic_light::set_t_green(const double_t t_green) { t_green_ = t_green; }
+    void traffic_light::set_t_red(const double_t t_red) { t_red_ = t_red; }
+
     void traffic_light::switch_to(runner::i_run& run, char direction)
     {
         auto self = shared_from_this();

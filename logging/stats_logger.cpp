@@ -140,7 +140,8 @@ namespace logging
             throw std::runtime_error("cannot open interval: " + path);
         }
         interval_file_ << "replication,model_time,Y_interval,Y_cum,"
-                          "queue_a,queue_b,passed_interval,w_count_interval\n";
+                          "queue_a,queue_b,avg_queue_a,avg_queue_b,"
+                          "passed_interval,w_count_interval\n";
         interval_open_ = true;
     }
 
@@ -219,11 +220,17 @@ namespace logging
                 ? c.interval_wait_sum_ / c.interval_wait_cnt_ : 0.0;
             const int passed_interval = c.passed_ - c.interval_passed_at_;
 
+            // Средняя длина очереди, взвешенная по времени от начала прогона:
+            // area — накопленная площадь под мгновенной очередью.
+            const double_t avg_a = (t > 0.0) ? c.area_a_ / t : c.cur_a_;
+            const double_t avg_b = (t > 0.0) ? c.area_b_ / t : c.cur_b_;
+
             c.interval_rows_.push_back(
                 std::to_string(c.interval_rep_) + ',' + num(t) + ','
                 + (c.interval_wait_cnt_ > 0 ? num(y_int) : std::string("NA"))
                 + ',' + num(y_cum) + ','
                 + num(c.cur_a_) + ',' + num(c.cur_b_) + ','
+                + num(avg_a) + ',' + num(avg_b) + ','
                 + std::to_string(passed_interval) + ','
                 + std::to_string(c.interval_wait_cnt_) + '\n');
 

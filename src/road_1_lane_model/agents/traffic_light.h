@@ -20,6 +20,11 @@ namespace agents
         char phase() const;
         void switch_to(runner::i_run& run, char direction);
         void switch_to_none(runner::i_run& run);
+
+        // Новые длительности применяются к следующим фазам; текущая фаза
+        // доигрывается с той длительностью, с которой была запущена.
+        void set_t_green(double_t t_green);
+        void set_t_red(double_t t_red);
     private:
         void wake_up_queue(runner::i_run& run, char direction) const;
         resources::road_segment& road_;

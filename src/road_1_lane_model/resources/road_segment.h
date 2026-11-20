@@ -36,7 +36,15 @@ namespace resources
         double_t last_car_enter_time() const;
         int capacity() const;
 
+        // Изменение параметров во время прогона. Вместимость участка
+        // пересчитывается сразу; уже едущие машины сохраняют запланированный
+        // выезд, новые въезды используют обновлённые значения.
+        void set_passage_time(double_t passage_time);
+        void set_cars_interval(double_t cars_interval);
+
     private:
+        void update_capacity();
+
         std::vector<std::shared_ptr<agents::car>>& queue(char direction);
         const std::vector<std::shared_ptr<agents::car>>& queue(const char direction) const;
 
