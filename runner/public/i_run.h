@@ -15,6 +15,10 @@ namespace runner
         virtual ~i_run() = default;
         virtual void run() = 0;
 
+        // Досрочно завершить прогон: текущее событие доигрывается, после
+        // чего модель останавливается и прогон закрывается штатно.
+        virtual void halt() = 0;
+
         virtual double_t model_time() const = 0;
         virtual i_model& model() = 0;
         virtual void new_event(std::shared_ptr<i_agent> agent, handler_t handler, double time) = 0;

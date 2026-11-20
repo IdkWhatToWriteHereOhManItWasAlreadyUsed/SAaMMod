@@ -43,6 +43,11 @@ namespace resources
         return cars_on_segment_ < capacity_;
     }
 
+    bool road_segment::empty() const
+    {
+        return cars_on_segment_ == 0;
+    }
+
     void road_segment::enter(double_t time)
     {
         last_car_enter_time_ = time;

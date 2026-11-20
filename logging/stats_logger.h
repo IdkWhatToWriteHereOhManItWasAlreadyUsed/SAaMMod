@@ -30,10 +30,15 @@ namespace logging
         // номер реплики для буфера интервалов ТЕКУЩЕГО потока
         void set_interval_rep(int rep);
 
+        // Дописать накопленные строки интервалов в файл и сбросить буфер.
+        // Нужно, чтобы внешний процесс (например, Python-график) видел
+        // данные до текущего модельного времени, не дожидаясь конца прогона.
+        void flush_intervals();
+
         void begin_run(double_t model_time);
         void sample(double_t model_time, std::size_t queue_a, std::size_t queue_b);
         void car_passed(double_t passage_time);
-        void car_waited(double_t wait_time);
+        void car_waited(double_t wait_time, char direction);
 
         // опубликовать результаты прогона текущего потока как реплику rep:
         // снимок попадает в реестр для write_replication, буфер строк
@@ -53,11 +58,18 @@ namespace logging
         {
             double_t y_sum = 0;
             int      y_cnt = 0;
+            double_t y_a_sum = 0;
+            int      y_a_cnt = 0;
+            double_t y_b_sum = 0;
+            int      y_b_cnt = 0;
             int      passed = 0;
+            double_t area_a = 0;
+            double_t area_b = 0;
             double_t max_a = 0;
             double_t max_b = 0;
         };
         snapshot take_snapshot();
+        void flush_interval_rows(core& c);
 
         std::mutex io_;
         std::map<int, snapshot> snapshots_;

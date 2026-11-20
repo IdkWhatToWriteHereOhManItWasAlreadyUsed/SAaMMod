@@ -28,6 +28,7 @@ namespace resources
         std::size_t queue_size(char direction) const;
 
         bool is_free() const;
+        bool empty() const;
         void enter(double_t time);
         void exit();
 

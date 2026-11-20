@@ -13,6 +13,11 @@ namespace runner
         virtual ~run_base() override = default;
 
         void run() override;
+        void halt() override;
+
+        // Фактическая длительность прогона: при досрочном halt() она равна
+        // модельному времени остановки, иначе — заданному run_time.
+        double_t actual_run_time() const;
 
         double_t model_time() const override;
         i_model& model() override;

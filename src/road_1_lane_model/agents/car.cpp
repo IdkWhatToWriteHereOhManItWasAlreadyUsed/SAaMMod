@@ -95,7 +95,8 @@ namespace agents
         }
 
 
-        logging::stats_logger::instance().car_waited(drive_start_time_ - arrival_time_);
+        logging::stats_logger::instance().car_waited(
+            drive_start_time_ - arrival_time_, direction_);
         logging::logger::instance().write_car(drive_start_time_, id_, "enter", direction_);
         road_.enter(drive_start_time_);
 
@@ -127,7 +128,7 @@ namespace agents
         logging::logger::instance().write_car(departure_time_, id_, "leave", direction_);
         logging::stats_logger::instance().car_passed(departure_time_ - arrival_time_);
         road_.exit();
-
+        light_.on_car_exit(run);
 
         auto next = road_.pop(direction_);
         if (next)

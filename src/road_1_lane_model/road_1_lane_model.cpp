@@ -32,6 +32,25 @@ road_1_lane_model::config::config(const std::string& path)
     lambda_a      = root["lambda_a"].asDouble();
     lambda_b      = root["lambda_b"].asDouble();
     seed          = root["seed"].asUInt();
+
+    const std::string dispatch_name =
+        root.get("dispatch", "fixed").asString();
+    if (dispatch_name == "clearance")
+    {
+        this->dispatch = agents::dispatch_mode::clearance;
+    }
+    else if (dispatch_name == "adaptive")
+    {
+        this->dispatch = agents::dispatch_mode::adaptive;
+    }
+    else if (dispatch_name == "fixed")
+    {
+        this->dispatch = agents::dispatch_mode::fixed;
+    }
+    else
+    {
+        throw std::runtime_error("unknown dispatch mode: " + dispatch_name);
+    }
 }
 
 road_1_lane_model::road_1_lane_model(const config& cfg)
@@ -39,7 +58,7 @@ road_1_lane_model::road_1_lane_model(const config& cfg)
     , rng_(cfg.seed)
     , road_segment_(cfg.passage_time, cfg.cars_interval)
     , traffic_light_(std::make_shared<agents::traffic_light>(
-          road_segment_, cfg.t_green, cfg.t_red))
+          road_segment_, cfg.t_green, cfg.t_red, cfg.dispatch))
 {
     car_generator_a_ = std::make_shared<agents::car_generator>(
         'A', cfg.lambda_a, rng_, road_segment_, *traffic_light_);

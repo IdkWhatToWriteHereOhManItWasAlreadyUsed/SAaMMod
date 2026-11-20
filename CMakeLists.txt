@@ -12,6 +12,10 @@ pkg_check_modules(JSONCPP REQUIRED jsoncpp)
 
 add_executable(${PROJECT_NAME}
         src/main.cpp
+        src/interactive/console_control.cpp
+        src/interactive/console_control.h
+        src/interactive/interactive_runner.cpp
+        src/interactive/interactive_runner.h
         src/road_1_lane_model/road_1_lane_model.cpp
         src/road_1_lane_model/agents/car.cpp
         src/road_1_lane_model/agents/car.h

@@ -2,11 +2,11 @@
 """График средней взвешенной длины очереди со стороны A.
 
 Читает результаты пункта 2:
-    results/2_tgreen_ramp/ramp_interval.csv
-    results/2_tgreen_ramp/ramp_log.csv
+    results/2_tgreen_interactive/ramp_interval.csv
+    results/2_tgreen_interactive/ramp_log.csv
 
-На левой оси — мгновенная и средняя взвешенная по времени длина очереди A,
-на правой — ступенчатый график t_green в моменты изменения параметра.
+На левой оси — мгновенная длина очереди A, на правой — ступенчатый
+график t_green в моменты изменения параметра.
 
 Требования: numpy, matplotlib.
 """
@@ -25,7 +25,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 REPO = Path(__file__).resolve().parent.parent
-DEFAULT_RESULTS = REPO / "results" / "2_tgreen_ramp"
+DEFAULT_RESULTS = REPO / "results" / "2_tgreen_interactive"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -96,10 +96,8 @@ def main() -> int:
     ramp_t, ramp_v = read_ramp(results / "ramp_log.csv")
 
     fig, ax = plt.subplots(figsize=(11.5, 5.8), dpi=args.dpi)
-    ax.plot(t, queue, color="#1f77b4", lw=0.6, alpha=0.25,
+    ax.plot(t, queue, color="#1f77b4", lw=1.4, alpha=0.90,
             label="мгновенная очередь A")
-    ax.plot(t, avg_queue, color="#1f77b4", lw=2.2,
-            label="средняя взвешенная длина очереди A")
     ax.set_xlabel("модельное время, сек")
     ax.set_ylabel("длина очереди A, машин")
     ax.grid(alpha=0.3)
@@ -135,13 +133,13 @@ def main() -> int:
         schedule = "журнал изменений параметра не найден"
         print(schedule)
 
-    ax.set_title("Пункт 2: средняя взвешенная длина очереди A и t_green")
+    ax.set_title("Пункт 2: мгновенная очередь A и t_green")
     ax.legend(handles, labels, loc="upper left", fontsize=8, framealpha=0.85)
     ax.set_xlim(0.0, float(t[-1]))
 
     fig.tight_layout()
     out.mkdir(parents=True, exist_ok=True)
-    path = out / "queue_a_weighted.png"
+    path = out / "queue_a_static.png"
     fig.savefig(path)
     plt.close(fig)
     print(f"график: {path}")

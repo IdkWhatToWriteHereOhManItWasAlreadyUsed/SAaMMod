@@ -42,6 +42,10 @@ namespace logging
         int      passed_ = 0;
         double_t wait_sum_ = 0;
         int      wait_cnt_ = 0;
+        double_t wait_sum_a_ = 0;
+        int      wait_cnt_a_ = 0;
+        double_t wait_sum_b_ = 0;
+        int      wait_cnt_b_ = 0;
 
         double_t interval_dt_ = 0;
         double_t interval_next_ = 0;
@@ -84,8 +88,9 @@ namespace logging
             summary_path_.clear();
             throw std::runtime_error("cannot open summary: " + path);
         }
-        summary_file_ << "replication,seed,Y,passed,wait_count,"
-                         "max_queue_a,max_queue_b,run_time\n";
+        summary_file_ << "replication,seed,Y,Y_a,Y_b,passed,wait_count,"
+                         "avg_queue_a,avg_queue_b,max_queue_a,max_queue_b,"
+                         "run_time\n";
     }
 
     void stats_logger::write_replication(int rep, unsigned seed, double_t run_time)
@@ -97,12 +102,20 @@ namespace logging
         if (it == snapshots_.end()) { return; }
         const snapshot& s = it->second;
         const double_t y = (s.y_cnt > 0) ? s.y_sum / s.y_cnt : 0.0;
+        const double_t y_a = (s.y_a_cnt > 0) ? s.y_a_sum / s.y_a_cnt : 0.0;
+        const double_t y_b = (s.y_b_cnt > 0) ? s.y_b_sum / s.y_b_cnt : 0.0;
+        const double_t avg_a = (run_time > 0.0) ? s.area_a / run_time : 0.0;
+        const double_t avg_b = (run_time > 0.0) ? s.area_b / run_time : 0.0;
 
         summary_file_ << rep << ','
                       << seed << ','
                       << num(y) << ','
+                      << num(y_a) << ','
+                      << num(y_b) << ','
                       << s.passed << ','
                       << s.y_cnt << ','
+                      << num(avg_a) << ','
+                      << num(avg_b) << ','
                       << num(s.max_a) << ','
                       << num(s.max_b) << ','
                       << num(run_time) << '\n';
@@ -163,6 +176,26 @@ namespace logging
         get_core().interval_rep_ = rep;
     }
 
+    void stats_logger::flush_interval_rows(core& c)
+    {
+        if (!c.interval_rows_.empty() && interval_file_.is_open())
+        {
+            for (const std::string& row : c.interval_rows_)
+            {
+                interval_file_ << row;
+            }
+            interval_file_.flush();
+        }
+        c.interval_rows_.clear();
+    }
+
+    void stats_logger::flush_intervals()
+    {
+        core& c = get_core();
+        std::lock_guard lock(io_);
+        flush_interval_rows(c);
+    }
+
     // ---- накопление (каждый поток — своё ядро) ----
 
     void stats_logger::begin_run(double_t model_time)
@@ -180,6 +213,10 @@ namespace logging
         c.passed_ = 0;
         c.wait_sum_ = 0;
         c.wait_cnt_ = 0;
+        c.wait_sum_a_ = 0;
+        c.wait_cnt_a_ = 0;
+        c.wait_sum_b_ = 0;
+        c.wait_cnt_b_ = 0;
 
         // параметры интервала заданы interval_start ДО запуска потоков
         c.interval_dt_ = interval_open_ ? interval_dt_ : 0.0;
@@ -246,11 +283,23 @@ namespace logging
         ++get_core().passed_;
     }
 
-    void stats_logger::car_waited(double_t wait_time)
+    void stats_logger::car_waited(const double_t wait_time, const char direction)
     {
         core& c = get_core();
         c.wait_sum_ += wait_time;
         ++c.wait_cnt_;
+
+        if (direction == 'A')
+        {
+            c.wait_sum_a_ += wait_time;
+            ++c.wait_cnt_a_;
+        }
+        else if (direction == 'B')
+        {
+            c.wait_sum_b_ += wait_time;
+            ++c.wait_cnt_b_;
+        }
+
         if (c.interval_dt_ > 0)
         {
             c.interval_wait_sum_ += wait_time;
@@ -263,7 +312,10 @@ namespace logging
     stats_logger::snapshot stats_logger::take_snapshot()
     {
         const core& c = get_core();
-        return snapshot{ c.wait_sum_, c.wait_cnt_, c.passed_,
+        return snapshot{ c.wait_sum_, c.wait_cnt_,
+                         c.wait_sum_a_, c.wait_cnt_a_,
+                         c.wait_sum_b_, c.wait_cnt_b_,
+                         c.passed_, c.area_a_, c.area_b_,
                          c.max_a_, c.max_b_ };
     }
 
@@ -272,15 +324,7 @@ namespace logging
         core& c = get_core();
 
         std::lock_guard lock(io_);
-        if (!c.interval_rows_.empty() && interval_file_.is_open())
-        {
-            for (const std::string& row : c.interval_rows_)
-            {
-                interval_file_ << row;
-            }
-            interval_file_.flush();
-        }
-        c.interval_rows_.clear();
+        flush_interval_rows(c);
 
         snapshots_[rep] = take_snapshot();
     }

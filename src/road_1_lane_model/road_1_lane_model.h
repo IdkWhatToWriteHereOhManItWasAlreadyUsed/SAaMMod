@@ -43,6 +43,10 @@ public:
         double_t lambda_a;
         double_t lambda_b;
         mutable unsigned seed;
+
+        // Политика диспетчеризации светофора. По умолчанию — прежнее
+        // фиксированное поведение.
+        agents::dispatch_mode dispatch = agents::dispatch_mode::fixed;
     };
 
     explicit road_1_lane_model(const config& cfg);

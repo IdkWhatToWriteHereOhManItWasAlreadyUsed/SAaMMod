@@ -30,6 +30,18 @@ namespace runner
         model_->sample(*this);
     }
 
+    void run_base::halt()
+    {
+        // Прогон заканчивается в текущий момент: end_of_run() увидит, что
+        // model_time_ уже не меньше run_time_, и штатно вызовет stop().
+        run_time_ = model_time_;
+    }
+
+    double_t run_base::actual_run_time() const
+    {
+        return run_time_;
+    }
+
     double_t run_base::model_time() const
     {
         return model_time_;
