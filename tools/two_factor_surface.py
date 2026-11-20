@@ -7,7 +7,8 @@ results/4_two_factor/<case>/g{T}_r{R}_summary.csv, считает комплек
 
     C = wY * Y/Y_ref + wQ * Q/Q_ref + wP * P_ref/P
 
-где Y — среднее ожидание, Q — средняя очередь, P — пропускная способность.
+где Y — среднее ожидание, Q — максимальная очередь одной из сторон,
+P — пропускная способность.
 Чем меньше C, тем лучше. Веса и референсная точка лежат в
 results/4_two_factor/criteria.csv; если файла нет, он создаётся
 со значениями по умолчанию.
@@ -38,10 +39,10 @@ CASES = ("symmetric", "asymmetric")
 # Значения по умолчанию; их можно переопределить в criteria.csv.
 DEFAULT_CRITERIA = {
     "weight_wait": 0.5,
-    "weight_queue": 0.3,
+    "weight_queue": 0.9,
     "weight_throughput": 0.2,
-    "ref_t_green": 50.0,
-    "ref_t_red": 30.0,
+    "ref_t_green": 15.0,
+    "ref_t_red": 40.0,
 }
 
 
@@ -78,20 +79,30 @@ def read_levels(meta_path: Path) -> tuple[list[float], list[float], int]:
     return parse(row["levels_x"]), parse(row["levels_y"]), int(row["reps_per_point"])
 
 
-def read_point(path: Path) -> tuple[float, float, float]:
+def read_point(path: Path) -> tuple[float, float, float, float, float]:
     ys: list[float] = []
-    queues: list[float] = []
+    queue_a: list[float] = []
+    queue_b: list[float] = []
+    queue_max: list[float] = []
     passed: list[float] = []
     with path.open("r", encoding="utf-8", newline="") as handle:
         for row in csv.DictReader(handle):
+            a = float(row["max_queue_a"])
+            b = float(row["max_queue_b"])
             ys.append(float(row["Y"]))
-            queues.append(
-                0.5 * (float(row["avg_queue_a"]) + float(row["avg_queue_b"]))
-            )
+            queue_a.append(a)
+            queue_b.append(b)
+            queue_max.append(max(a, b))
             passed.append(float(row["passed"]))
     if not ys:
         raise RuntimeError(f"{path}: нет данных")
-    return float(np.mean(ys)), float(np.mean(queues)), float(np.mean(passed))
+    return (
+        float(np.mean(ys)),
+        float(np.mean(queue_a)),
+        float(np.mean(queue_b)),
+        float(np.mean(queue_max)),
+        float(np.mean(passed)),
+    )
 
 
 def load_case(case: str, criteria: dict[str, float]):
@@ -104,12 +115,14 @@ def load_case(case: str, criteria: dict[str, float]):
             path = case_dir / f"g{level_tag(green)}_r{level_tag(red)}_summary.csv"
             if not path.exists():
                 raise FileNotFoundError(f"нет файла: {path}")
-            y_mean, q_mean, p_mean = read_point(path)
+            y_mean, qa_mean, qb_mean, qmax_mean, p_mean = read_point(path)
             rows.append({
                 "t_green": green,
                 "t_red": red,
                 "Y": y_mean,
-                "queue": q_mean,
+                "max_queue_a": qa_mean,
+                "max_queue_b": qb_mean,
+                "max_queue": qmax_mean,
                 "passed": p_mean,
             })
 
@@ -126,34 +139,33 @@ def load_case(case: str, criteria: dict[str, float]):
         )
 
     y_ref = ref["Y"]
-    q_ref = ref["queue"]
+    q_ref = ref["max_queue"]
     p_ref = ref["passed"]
     for row in rows:
         row["C"] = (
             criteria["weight_wait"] * row["Y"] / y_ref
-            + criteria["weight_queue"] * row["queue"] / q_ref
+            + criteria["weight_queue"] * row["max_queue"] / q_ref
             + criteria["weight_throughput"] * p_ref / row["passed"]
         )
 
-    grid = np.array([
-        [next(r["C"] for r in rows
-              if r["t_green"] == g and r["t_red"] == red)
-         for g in green_levels]
-        for red in red_levels
-    ])
-    y_grid = np.array([
-        [next(r["Y"] for r in rows
-              if r["t_green"] == g and r["t_red"] == red)
-         for g in green_levels]
-        for red in red_levels
-    ])
+    def make_grid(field: str) -> np.ndarray:
+        return np.array([
+            [next(r[field] for r in rows
+                  if r["t_green"] == g and r["t_red"] == red)
+             for g in green_levels]
+            for red in red_levels
+        ])
+
     return {
         "green": np.array(green_levels),
         "red": np.array(red_levels),
         "reps": reps,
         "rows": rows,
-        "C": grid,
-        "Y": y_grid,
+        "C": make_grid("C"),
+        "Y": make_grid("Y"),
+        "max_queue_a": make_grid("max_queue_a"),
+        "max_queue_b": make_grid("max_queue_b"),
+        "max_queue": make_grid("max_queue"),
     }
 
 
@@ -161,12 +173,16 @@ def write_summary(cases: dict[str, dict]) -> None:
     path = RESULTS / "two_factor_summary.csv"
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["case", "t_green", "t_red", "Y", "queue", "passed", "C"])
+        writer.writerow([
+            "case", "t_green", "t_red", "Y", "max_queue_a",
+            "max_queue_b", "max_queue", "passed", "C",
+        ])
         for case, data in cases.items():
             for row in data["rows"]:
                 writer.writerow([
                     case, row["t_green"], row["t_red"], row["Y"],
-                    row["queue"], row["passed"], row["C"],
+                    row["max_queue_a"], row["max_queue_b"],
+                    row["max_queue"], row["passed"], row["C"],
                 ])
 
 
@@ -259,6 +275,88 @@ def plot_surface_Y(case: str, data: dict, out_dir: Path) -> None:
     plt.close(fig)
 
 
+def plot_surface_max_queue(case: str, data: dict, out_dir: Path,
+                           key: str, filename: str, title: str,
+                           cmap: str) -> None:
+    green, red = data["green"], data["red"]
+    x, y = np.meshgrid(green, red)
+    z = data[key]
+
+    fig = plt.figure(figsize=(10.0, 7.0))
+    ax = fig.add_subplot(111, projection="3d")
+    surf = ax.plot_surface(x, y, z, cmap=cmap, edgecolor="k",
+                           linewidth=0.25, alpha=0.92)
+    ax.set_xlabel("t_green, сек")
+    ax.set_ylabel("t_red, сек")
+    ax.set_zlabel("машин")
+    ax.set_title(f"{case}: {title}")
+    fig.colorbar(surf, ax=ax, shrink=0.6, label="машин")
+    fig.tight_layout()
+    fig.savefig(out_dir / filename)
+    plt.close(fig)
+
+
+def plot_surface_max_queue_zoom(case: str, data: dict, out_dir: Path,
+                                min_green: float = 30.0) -> None:
+    mask = data["green"] >= min_green
+    green = data["green"][mask]
+    if green.size < 2:
+        return
+    red = data["red"]
+    x, y = np.meshgrid(green, red)
+    z = data["max_queue"][:, mask]
+
+    fig = plt.figure(figsize=(10.0, 7.0))
+    ax = fig.add_subplot(111, projection="3d")
+    surf = ax.plot_surface(x, y, z, cmap="magma", edgecolor="k",
+                           linewidth=0.3, alpha=0.92)
+    ax.set_xlabel("t_green, сек")
+    ax.set_ylabel("t_red, сек")
+    ax.set_zlabel("машин")
+    ax.set_title(f"{case}: max queue, t_green >= {min_green:g}")
+    fig.colorbar(surf, ax=ax, shrink=0.6, label="машин")
+    fig.tight_layout()
+    fig.savefig(out_dir / "surface_max_queue_zoom.png")
+    plt.close(fig)
+
+
+def plot_surface_max_queue_log(case: str, data: dict, out_dir: Path) -> None:
+    green, red = data["green"], data["red"]
+    x, y = np.meshgrid(green, red)
+    z = np.log10(np.maximum(data["max_queue"], 1e-9))
+
+    fig = plt.figure(figsize=(10.0, 7.0))
+    ax = fig.add_subplot(111, projection="3d")
+    surf = ax.plot_surface(x, y, z, cmap="magma", edgecolor="k",
+                           linewidth=0.25, alpha=0.92)
+    ax.set_xlabel("t_green, сек")
+    ax.set_ylabel("t_red, сек")
+    ax.set_zlabel("log10(макс. очередь)")
+    ax.set_title(f"{case}: логарифм максимальной очереди")
+    fig.colorbar(surf, ax=ax, shrink=0.6, label="log10(машин)")
+    fig.tight_layout()
+    fig.savefig(out_dir / "surface_max_queue_log.png")
+    plt.close(fig)
+
+
+def plot_max_queue_slices(case: str, data: dict, out_dir: Path) -> None:
+    green, red = data["green"], data["red"]
+    z = data["max_queue"]
+
+    fig, ax = plt.subplots(figsize=(9.0, 5.5))
+    for index, red_value in enumerate(red):
+        ax.plot(green, z[index], "o-", label=f"t_red={red_value:g}")
+    ax.set_yscale("log")
+    ax.set_xlabel("t_green, сек")
+    ax.set_ylabel("макс. очередь, машин (log)")
+    ax.set_title(f"{case}: max queue по t_green для разных t_red")
+    ax.grid(alpha=0.3)
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    fig.savefig(out_dir / "max_queue_slices.png")
+    plt.close(fig)
+
+
 def plot_contour_C(case: str, data: dict, out_dir: Path) -> None:
     green, red = data["green"], data["red"]
     z = data["C"]
@@ -334,6 +432,18 @@ def main() -> int:
 
         plot_surface_C(case, data, data["out_dir"])
         plot_surface_Y(case, data, data["out_dir"])
+        plot_surface_max_queue(case, data, data["out_dir"],
+                               "max_queue_a", "surface_max_queue_a.png",
+                               "максимальная очередь A", "Blues")
+        plot_surface_max_queue(case, data, data["out_dir"],
+                               "max_queue_b", "surface_max_queue_b.png",
+                               "максимальная очередь B", "Reds")
+        plot_surface_max_queue(case, data, data["out_dir"],
+                               "max_queue", "surface_max_queue.png",
+                               "максимальная очередь одной из сторон", "magma")
+        plot_surface_max_queue_zoom(case, data, data["out_dir"])
+        plot_surface_max_queue_log(case, data, data["out_dir"])
+        plot_max_queue_slices(case, data, data["out_dir"])
         plot_contour_C(case, data, data["out_dir"])
         plot_slices(case, data, data["out_dir"])
 

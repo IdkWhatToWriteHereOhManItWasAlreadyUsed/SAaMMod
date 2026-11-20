@@ -31,7 +31,7 @@ namespace
     constexpr int DISPATCH_REPS = 30;
 
     // Пункт 4: двухфакторный эксперимент по t_green и t_red.
-    constexpr int TWO_FACTOR_REPS = 30;
+    constexpr int TWO_FACTOR_REPS = 20;
 
     const std::string CFG_DIR  = "../custom_configs/";
     const std::string OUT_DIR  = "../results/";
@@ -134,7 +134,7 @@ namespace
 
     // ---- пункт 4: двухфакторный эксперимент ----
     // Меняются только t_green и t_red, 5 уровней на каждый фактор.
-    constexpr double_t TF_GREEN_LEVELS[] = {5.0, 10.0, 15.0, 20.0, 25.0};
+    constexpr double_t TF_GREEN_LEVELS[] = {5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0, 45.0, 60.0, 75.0, 90.0, 100.0};
     constexpr double_t TF_RED_LEVELS[]   = {20.0, 30.0, 40.0, 50.0, 60.0};
 
     // Имя папки уровня без точки: 30 -> "30", 12.5 -> "12p5".
@@ -190,13 +190,13 @@ namespace
     {
         // Симметричная нагрузка.
         const road_1_lane_model::config symmetric(
-            19.0, 2.0, 40.0, 25.0, 0.14, 0.14, 666777u);
+            19.0, 2.0, 40.0, 25.0, 0.11, 0.11, 666777u);
         run_two_factor_set(symmetric, out_dir + "/symmetric");
 
         // Асимметричная нагрузка — для наглядности.
         const road_1_lane_model::config asymmetric(
-            19.0, 2.0, 40.0, 25.0, 0.17, 0.09, 666777u);
-        run_two_factor_set(asymmetric, out_dir + "/asymmetric");
+            19.0, 2.0, 40.0, 25.0, 0.16, 0.097, 666777u);
+       // run_two_factor_set(asymmetric, out_dir + "/asymmetric");
     }
 
     // ---- выбор режима запуска ----
