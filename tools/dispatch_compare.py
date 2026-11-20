@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """Сравнение политик диспетчеризации светофора.
 
-Читает results/3_dispatch/<case>/{fixed,clearance,adaptive}_summary.csv,
+Запускается без аргументов. Читает
+results/3_dispatch/<case>/{fixed,clearance,adaptive}_summary.csv,
 считает средние с 95% доверительными интервалами, парные t-тесты
-относительно fixed и строит сводные графики.
+относительно fixed и строит сводные графики для всех режимов
+и обоих наборов нагрузки.
 
 Требования: numpy, scipy, matplotlib.
 """
 
 from __future__ import annotations
 
-import argparse
 import csv
 import math
 from pathlib import Path
@@ -24,7 +25,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 REPO = Path(__file__).resolve().parent.parent
-DEFAULT_RESULTS = REPO / "results" / "3_dispatch"
+RESULTS = REPO / "results" / "3_dispatch"
+CASES = ("symmetric", "asymmetric")
+DPI = 150
 
 POLICIES = ("fixed", "clearance", "adaptive")
 POLICY_TITLES = {
@@ -48,23 +51,6 @@ METRICS = (
     ("max_queue_a", "Макс. очередь A"),
     ("max_queue_b", "Макс. очередь B"),
 )
-
-
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="dispatch_compare.py",
-        description="Сравнение fixed / clearance / adaptive.",
-    )
-    parser.add_argument(
-        "--case", choices=("symmetric", "asymmetric", "all"), default="all",
-        help="набор нагрузки (по умолчанию all)",
-    )
-    parser.add_argument(
-        "--results", type=Path, default=DEFAULT_RESULTS,
-        help=f"папка результатов (по умолчанию {DEFAULT_RESULTS})",
-    )
-    parser.add_argument("--dpi", type=int, default=150, help="разрешение png")
-    return parser
 
 
 def read_summary(path: Path) -> dict[str, dict[str, float]]:
@@ -199,33 +185,60 @@ def plot_case(case: str, summary: dict[str, dict[str, np.ndarray]],
     fig, axes = plt.subplots(2, 2, figsize=(12.0, 8.0), dpi=dpi)
     ax_y, ax_passed, ax_dir, ax_queue = axes.flat
 
+    # Верхняя граница шкалы считается только по альтернативам; fixed
+    # может выходить за неё, чтобы adaptive/clearance были видны крупно.
+    def policy_top(metrics: tuple[str, ...],
+                   policies: tuple[str, ...] = ("clearance", "adaptive")) -> float:
+        return max(
+            mean_ci(summary[metric][policy])[2]
+            for metric in metrics
+            for policy in policies
+        )
+
+    def add_labels(ax, positions, values, fmt: str = "{:.2f}") -> None:
+        top = ax.get_ylim()[1]
+        for x, value in zip(positions, values):
+            if value > top * 0.98:
+                ax.text(x, top * 0.97, fmt.format(value) + " ↑",
+                        ha="center", va="top", fontsize=7)
+            else:
+                ax.text(x, value, fmt.format(value),
+                        ha="center", va="bottom", fontsize=7)
+
     def bars(ax, metric: str, title: str, ylabel: str,
-             policies: tuple[str, ...] = POLICIES) -> None:
+             limit: float | None = None) -> None:
         means = []
         errors = []
-        for policy in policies:
-            mean, lo, hi = mean_ci(summary[metric][policy])
+        for policy in POLICIES:
+            mean, _lo, hi = mean_ci(summary[metric][policy])
             means.append(mean)
             errors.append(hi - mean)
-        positions = np.arange(len(policies))
-        colors = [POLICY_COLORS[p] for p in policies]
+        positions = np.arange(len(POLICIES))
+        colors = [POLICY_COLORS[p] for p in POLICIES]
         ax.bar(positions, means, yerr=errors, capsize=5,
                color=colors, alpha=0.85)
-        for x, value in zip(positions, means):
-            ax.text(x, value, f"{value:.2f}", ha="center", va="bottom",
-                    fontsize=8)
         ax.set_xticks(positions)
-        ax.set_xticklabels([POLICY_TITLES[p] for p in policies])
+        ax.set_xticklabels([POLICY_TITLES[p] for p in POLICIES])
         ax.set_title(title)
         ax.set_ylabel(ylabel)
         ax.grid(alpha=0.3, axis="y")
         ax.set_axisbelow(True)
+        if limit is not None:
+            ax.set_ylim(0.0, limit)
+        add_labels(ax, positions, means)
 
-    bars(ax_y, "Y", f"{case}: среднее ожидание", "сек")
+    y_limit = policy_top(("Y",)) * 1.15
+    bars(ax_y, "Y",
+         f"{case}: среднее ожидание (шкала по clearance/adaptive)",
+         "сек", y_limit)
+
+    # Пропускная способность: значения близки, ограничивать не нужно.
     bars(ax_passed, "passed", f"{case}: пропускная способность", "машин")
 
     width = 0.36
     positions = np.arange(len(POLICIES))
+    dir_limit = policy_top(("Y_a", "Y_b")) * 1.15
+    ax_dir.set_ylim(0.0, dir_limit)
     for index, (metric, label, color) in enumerate((
         ("Y_a", "A", "#1f77b4"),
         ("Y_b", "B", "#d62728"),
@@ -233,17 +246,22 @@ def plot_case(case: str, summary: dict[str, dict[str, np.ndarray]],
         means = [mean_ci(summary[metric][p])[0] for p in POLICIES]
         errors = [mean_ci(summary[metric][p])[2] -
                   mean_ci(summary[metric][p])[0] for p in POLICIES]
-        ax_dir.bar(positions + (index - 0.5) * width, means, width,
+        offset = (index - 0.5) * width
+        ax_dir.bar(positions + offset, means, width,
                    yerr=errors, capsize=4, color=color, alpha=0.85,
                    label=f"направление {label}")
+        add_labels(ax_dir, positions + offset, means)
     ax_dir.set_xticks(positions)
     ax_dir.set_xticklabels([POLICY_TITLES[p] for p in POLICIES])
-    ax_dir.set_title(f"{case}: ожидание по направлениям")
+    ax_dir.set_title(f"{case}: ожидание по направлениям "
+                     f"(шкала по clearance/adaptive)")
     ax_dir.set_ylabel("сек")
     ax_dir.legend(fontsize=8)
     ax_dir.grid(alpha=0.3, axis="y")
     ax_dir.set_axisbelow(True)
 
+    queue_limit = policy_top(("avg_queue_a", "avg_queue_b")) * 1.15
+    ax_queue.set_ylim(0.0, queue_limit)
     for index, (metric, label, color) in enumerate((
         ("avg_queue_a", "A", "#1f77b4"),
         ("avg_queue_b", "B", "#d62728"),
@@ -251,12 +269,15 @@ def plot_case(case: str, summary: dict[str, dict[str, np.ndarray]],
         means = [mean_ci(summary[metric][p])[0] for p in POLICIES]
         errors = [mean_ci(summary[metric][p])[2] -
                   mean_ci(summary[metric][p])[0] for p in POLICIES]
-        ax_queue.bar(positions + (index - 0.5) * width, means, width,
+        offset = (index - 0.5) * width
+        ax_queue.bar(positions + offset, means, width,
                      yerr=errors, capsize=4, color=color, alpha=0.85,
                      label=f"направление {label}")
+        add_labels(ax_queue, positions + offset, means)
     ax_queue.set_xticks(positions)
     ax_queue.set_xticklabels([POLICY_TITLES[p] for p in POLICIES])
-    ax_queue.set_title(f"{case}: средняя очередь")
+    ax_queue.set_title(f"{case}: средняя очередь "
+                       f"(шкала по clearance/adaptive)")
     ax_queue.set_ylabel("машин")
     ax_queue.legend(fontsize=8)
     ax_queue.grid(alpha=0.3, axis="y")
@@ -269,12 +290,11 @@ def plot_case(case: str, summary: dict[str, dict[str, np.ndarray]],
 
 
 def main() -> int:
-    args = build_parser().parse_args()
-    cases = ("symmetric", "asymmetric") if args.case == "all" else (args.case,)
-
-    for case in cases:
-        data = load_case(args.results, case)
-        compare(data, case, args.results / case, args.dpi)
+    # Скрипт запускается без аргументов: всегда строит графики для всех
+    # наборов нагрузки и всех политик.
+    for case in CASES:
+        data = load_case(RESULTS, case)
+        compare(data, case, RESULTS / case, DPI)
     return 0
 
 

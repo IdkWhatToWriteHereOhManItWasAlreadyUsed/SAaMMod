@@ -17,7 +17,7 @@ namespace
     // Пункт 1: варьирование t_green вокруг x0 из конфига, k = -4..4.
     constexpr int      LEVELS = 9;
     constexpr int      K_MIN  = -4;
-    constexpr int      REPS   = 20;
+    constexpr int      REPS   = 30;
     constexpr double_t DELTA  = 4.0;
 
     // Пункт 2: интерактивное изменение t_green.
@@ -28,7 +28,10 @@ namespace
     constexpr double_t INTERACTIVE_RUN_TIME      = 66666.0;
 
     // Пункт 3: сравнение политик диспетчеризации.
-    constexpr int DISPATCH_REPS = 20;
+    constexpr int DISPATCH_REPS = 30;
+
+    // Пункт 4: двухфакторный эксперимент по t_green и t_red.
+    constexpr int TWO_FACTOR_REPS = 30;
 
     const std::string CFG_DIR  = "../custom_configs/";
     const std::string OUT_DIR  = "../results/";
@@ -116,22 +119,91 @@ namespace
 
     void run_dispatch_experiment(const std::string& out_dir)
     {
-        // Симметричная нагрузка: адаптации почти нечего делать.
+        // Симметричная нагрузка near capacity: fixed уже на грани,
+        // clearance/adaptive должны показать разницу.
         const road_1_lane_model::config symmetric(
-            20.0, 2.0, 60.0, 30.0, 0.11, 0.11, 1567778u);
+            20.0, 2.0, 40.0, 25.0, 0.14, 0.14, 666777u);
         run_dispatch_set(symmetric, out_dir + "/symmetric");
 
-        // Асимметричная нагрузка: здесь адаптивный зелёный должен дать
-        // заметный эффект за счёт перераспределения времени в пользу A.
+        // Асимметричная нагрузка near capacity: A перегружено,
+        // adaptive должен перераспределить зелёное в его пользу.
         const road_1_lane_model::config asymmetric(
-            20.0, 2.0, 60.0, 30.0, 0.15, 0.07, 1567778u);
+            20.0, 2.0, 40.0, 25.0, 0.17, 0.09, 666777u);
         run_dispatch_set(asymmetric, out_dir + "/asymmetric");
+    }
+
+    // ---- пункт 4: двухфакторный эксперимент ----
+    // Меняются только t_green и t_red, 5 уровней на каждый фактор.
+    constexpr double_t TF_GREEN_LEVELS[] = {5.0, 10.0, 15.0, 20.0, 25.0};
+    constexpr double_t TF_RED_LEVELS[]   = {20.0, 30.0, 40.0, 50.0, 60.0};
+
+    // Имя папки уровня без точки: 30 -> "30", 12.5 -> "12p5".
+    std::string level_tag(const double_t value)
+    {
+        std::string text = std::to_string(static_cast<int>(value));
+        return text;
+    }
+
+    void run_two_factor_set(const road_1_lane_model::config& base_cfg,
+                            const std::string& out_dir)
+    {
+        std::filesystem::create_directories(out_dir);
+
+        for (const double_t t_green : TF_GREEN_LEVELS)
+        {
+            for (const double_t t_red : TF_RED_LEVELS)
+            {
+                auto cfg = base_cfg;
+                cfg.t_green = t_green;
+                cfg.t_red = t_red;
+                // Пункт 4 оценивает саму модель, политику не меняем.
+                cfg.dispatch = agents::dispatch_mode::fixed;
+
+                std::cout << "пункт 4: t_green=" << t_green
+                          << ", t_red=" << t_red << '\n';
+
+                const std::string prefix =
+                    out_dir + "/g" + level_tag(t_green) +
+                    "_r" + level_tag(t_red);
+                run_pack(cfg, prefix, TWO_FACTOR_REPS, RUN_TIME);
+            }
+        }
+
+        std::ofstream meta(out_dir + "/meta.csv");
+        meta << "factor_x,levels_x,factor_y,levels_y,reps_per_point,"
+                "run_time,seed\n";
+        meta << "t_green,[";
+        for (std::size_t i = 0; i < std::size(TF_GREEN_LEVELS); ++i)
+        {
+            meta << (i ? ";" : "") << TF_GREEN_LEVELS[i];
+        }
+        meta << "],t_red,[";
+        for (std::size_t i = 0; i < std::size(TF_RED_LEVELS); ++i)
+        {
+            meta << (i ? ";" : "") << TF_RED_LEVELS[i];
+        }
+        meta << "]," << TWO_FACTOR_REPS << ',' << RUN_TIME << ','
+             << base_cfg.seed << '\n';
+    }
+
+    void run_two_factor_experiment(const std::string& out_dir)
+    {
+        // Симметричная нагрузка.
+        const road_1_lane_model::config symmetric(
+            19.0, 2.0, 40.0, 25.0, 0.14, 0.14, 666777u);
+        run_two_factor_set(symmetric, out_dir + "/symmetric");
+
+        // Асимметричная нагрузка — для наглядности.
+        const road_1_lane_model::config asymmetric(
+            19.0, 2.0, 40.0, 25.0, 0.17, 0.09, 666777u);
+        run_two_factor_set(asymmetric, out_dir + "/asymmetric");
     }
 
     // ---- выбор режима запуска ----
     bool valid_mode(const std::string& mode)
     {
-        return mode == "1" || mode == "2" || mode == "3" || mode == "all";
+        return mode == "1" || mode == "2" || mode == "3" ||
+               mode == "4" || mode == "all";
     }
 
     std::string trim(std::string text)
@@ -162,7 +234,8 @@ namespace
                    "  1 — зависимость Y от t_green\n"
                    "  2 — интерактивный прогон t_green\n"
                    "  3 — сравнение fixed / clearance / adaptive\n"
-                   "  all — все три пункта\n"
+                   "  4 — двухфакторный эксперимент t_green × t_red\n"
+                   "  all — все пункты\n"
                    "Ввод: " << std::flush;
 
             std::string line;
@@ -227,12 +300,13 @@ namespace
 int main(const int argc, char** argv)
 {
     // Режим: 1 — зависимость, 2 — интерактивный прогон,
-    // 3 — сравнение политик, all — все три пункта.
+    // 3 — сравнение политик, 4 — двухфакторный эксперимент,
+    // all — все пункты.
     const std::string mode = choose_mode(argc, argv);
     if (!valid_mode(mode))
     {
         std::cerr << "использование: " << argv[0]
-                  << " [1|2|3|all]\n";
+                  << " [1|2|3|4|all]\n";
         return 1;
     }
 
@@ -251,7 +325,7 @@ int main(const int argc, char** argv)
             30.0,                         // t_red
             0.11,                         // lambda_a
             0.11,                         // lambda_b
-            1567778u);                    // seed
+            666777u);                    // seed
 
         run_interactive(interactive_cfg, OUT_DIR + "2_tgreen_interactive",
                         "t_green", INTERACTIVE_T_GREEN_START,
@@ -262,6 +336,11 @@ int main(const int argc, char** argv)
     if (mode == "3" || mode == "all")
     {
         run_dispatch_experiment(OUT_DIR + "3_dispatch");
+    }
+
+    if (mode == "4" || mode == "all")
+    {
+        run_two_factor_experiment(OUT_DIR + "4_two_factor");
     }
 
     return 0;

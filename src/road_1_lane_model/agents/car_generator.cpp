@@ -36,6 +36,8 @@ namespace agents
             [self](runner::i_run& r) { self->spawn_car(r); }
         );
 
+        traffic_light_.on_car_arrival(direction_);
+
         auto car = std::make_shared<agents::car>(next_id++, direction_, road_, traffic_light_);
 
         run.new_event
