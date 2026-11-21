@@ -190,7 +190,7 @@ namespace
     {
         // Симметричная нагрузка.
         const road_1_lane_model::config symmetric(
-            19.0, 2.0, 40.0, 25.0, 0.11, 0.11, 666777u);
+            29.0, 2.0, 40.0, 30.0, 0.11, 0.11, 666777u);
         run_two_factor_set(symmetric, out_dir + "/symmetric");
 
         // Асимметричная нагрузка — для наглядности.

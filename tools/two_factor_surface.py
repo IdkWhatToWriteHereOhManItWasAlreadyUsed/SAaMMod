@@ -9,12 +9,15 @@ results/4_two_factor/<case>/g{T}_r{R}_summary.csv, считает комплек
 
 где Y — среднее ожидание, Q — максимальная очередь одной из сторон,
 P — пропускная способность.
-Чем меньше C, тем лучше. Веса и референсная точка лежат в
-results/4_two_factor/criteria.csv; если файла нет, он создаётся
-со значениями по умолчанию.
+Чем меньше C, тем лучше. Веса и референсная точка заданы в
+DEFAULT_CRITERIA ниже.
 
 Строит поверхности C, Y, изолинии C и срезы по каждому фактору,
-оценивает значимость t_green и t_red.
+оценивает значимость t_green и t_red. На поверхностях вертикальная
+ось обрезается до нижних 10% размаха, чтобы был виден «низ» рельефа.
+Цветовая шкала при этом тоже обрезается по тем же границам, но
+нелинейно (PowerNorm с gamma>1) — низкие значения растягиваются,
+чтобы градации в первой трети диапазона были заметнее.
 
 Требования: numpy, matplotlib.
 """
@@ -22,6 +25,7 @@ results/4_two_factor/criteria.csv; если файла нет, он создаё
 from __future__ import annotations
 
 import csv
+import re
 from pathlib import Path
 
 import numpy as np
@@ -30,20 +34,27 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.colors import PowerNorm
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
 REPO = Path(__file__).resolve().parent.parent
 RESULTS = REPO / "results" / "4_two_factor"
 CASES = ("symmetric", "asymmetric")
 
-# Значения по умолчанию; их можно переопределить в criteria.csv.
+# Веса и референсная точка критерия C.
 DEFAULT_CRITERIA = {
-    "weight_wait": 0.5,
-    "weight_queue": 0.9,
+    "weight_wait": 1.3,
+    "weight_queue": 22222.9,
     "weight_throughput": 0.2,
-    "ref_t_green": 15.0,
+    "ref_t_green": 20.0,
     "ref_t_red": 40.0,
 }
+
+# gamma для PowerNorm: >1 растягивает низкие значения,
+# <1 — высокие. 2.0–3.0 даёт заметную градацию в первой трети.
+COLOR_GAMMA = 2.5
+
+_SUMMARY_RE = re.compile(r"^g(?P<g>[0-9p.]+)_r(?P<r>[0-9p.]+)_summary\.csv$")
 
 
 def level_tag(value: float) -> str:
@@ -52,31 +63,41 @@ def level_tag(value: float) -> str:
     return str(value).replace(".", "p")
 
 
-def read_criteria() -> dict[str, float]:
-    path = RESULTS / "criteria.csv"
-    if path.exists():
-        with path.open("r", encoding="utf-8", newline="") as handle:
-            row = next(csv.DictReader(handle), None)
-        if row:
-            return {key: float(row[key]) for key in DEFAULT_CRITERIA}
-    RESULTS.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(DEFAULT_CRITERIA))
-        writer.writeheader()
-        writer.writerow(DEFAULT_CRITERIA)
-    return dict(DEFAULT_CRITERIA)
+def _tag_to_float(tag: str) -> float:
+    return float(tag.replace("p", "."))
 
 
-def read_levels(meta_path: Path) -> tuple[list[float], list[float], int]:
-    with meta_path.open("r", encoding="utf-8", newline="") as handle:
-        row = next(csv.DictReader(handle), None)
-    if row is None:
-        raise RuntimeError(f"{meta_path}: пустой meta.csv")
+def read_levels(case: str) -> tuple[list[float], list[float], int]:
+    """Восстанавливает уровни и число реплик из имён summary-файлов."""
+    case_dir = RESULTS / case
+    if not case_dir.is_dir():
+        raise FileNotFoundError(f"нет каталога: {case_dir}")
 
-    def parse(text: str) -> list[float]:
-        return [float(value) for value in text.strip("[]").split(";") if value]
+    greens: set[float] = set()
+    reds: set[float] = set()
+    files: list[Path] = []
+    for path in case_dir.iterdir():
+        match = _SUMMARY_RE.match(path.name)
+        if not match:
+            continue
+        greens.add(_tag_to_float(match.group("g")))
+        reds.add(_tag_to_float(match.group("r")))
+        files.append(path)
 
-    return parse(row["levels_x"]), parse(row["levels_y"]), int(row["reps_per_point"])
+    if not files:
+        raise FileNotFoundError(f"{case_dir}: нет файлов g*_r*_summary.csv")
+    if len(files) != len(greens) * len(reds):
+        raise RuntimeError(
+            f"{case_dir}: неполная сетка — файлов {len(files)}, "
+            f"а точек {len(greens)}×{len(reds)}={len(greens) * len(reds)}"
+        )
+
+    with files[0].open("r", encoding="utf-8", newline="") as handle:
+        reps = sum(1 for _ in csv.DictReader(handle))
+    if reps <= 0:
+        raise RuntimeError(f"{files[0]}: нет строк с репликами")
+
+    return sorted(greens), sorted(reds), reps
 
 
 def read_point(path: Path) -> tuple[float, float, float, float, float]:
@@ -107,7 +128,7 @@ def read_point(path: Path) -> tuple[float, float, float, float, float]:
 
 def load_case(case: str, criteria: dict[str, float]):
     case_dir = RESULTS / case
-    green_levels, red_levels, reps = read_levels(case_dir / "meta.csv")
+    green_levels, red_levels, reps = read_levels(case)
 
     rows: list[dict[str, float]] = []
     for green in green_levels:
@@ -143,9 +164,9 @@ def load_case(case: str, criteria: dict[str, float]):
     p_ref = ref["passed"]
     for row in rows:
         row["C"] = (
-            criteria["weight_wait"] * row["Y"] / y_ref
-            + criteria["weight_queue"] * row["max_queue"] / q_ref
-            + criteria["weight_throughput"] * p_ref / row["passed"]
+                criteria["weight_wait"] * row["Y"] / y_ref
+                + criteria["weight_queue"] * row["max_queue"] / q_ref
+                + criteria["weight_throughput"] * p_ref / max(row["passed"], 1e-9)
         )
 
     def make_grid(field: str) -> np.ndarray:
@@ -167,6 +188,28 @@ def load_case(case: str, criteria: dict[str, float]):
         "max_queue_b": make_grid("max_queue_b"),
         "max_queue": make_grid("max_queue"),
     }
+
+
+def _zlim_low_fraction(z: np.ndarray, fraction: float = 0.1) -> tuple[float, float]:
+    """Границы Z: нижние `fraction` размаха, чтобы обрезать верх."""
+    z_min = float(np.nanmin(z))
+    z_max = float(np.nanmax(z))
+    span = z_max - z_min
+    if span <= 0:
+        pad = max(abs(z_max) * 0.01, 1e-9)
+        return z_min - pad, z_max + pad
+    return z_min, z_min + fraction * span
+
+
+def _color_norm(z: np.ndarray, gamma: float = 4.0) -> PowerNorm:
+    """Нелинейная нормировка цвета по обрезанному диапазону Z.
+
+    Берём те же границы, что и у оси (низ 10% размаха), и применяем
+    PowerNorm(gamma>1): низкие значения получают больше цветового
+    пространства, градации в первой трети диапазона становятся заметнее.
+    """
+    z_lo, z_hi = _zlim_low_fraction(z)
+    return PowerNorm(gamma=gamma, vmin=z_lo, vmax=z_hi, clip=True)
 
 
 def write_summary(cases: dict[str, dict]) -> None:
@@ -224,9 +267,9 @@ def write_effects(cases: dict[str, dict]) -> None:
             effects = data["effects"]
             stronger = "t_green" if effects["ss_green"] >= effects["ss_red"] else "t_red"
             for factor, range_key, share_key in (
-                ("t_green", "range_green", "share_green"),
-                ("t_red", "range_red", "share_red"),
-                ("interaction", "0", "share_interaction"),
+                    ("t_green", "range_green", "share_green"),
+                    ("t_red", "range_red", "share_red"),
+                    ("interaction", "0", "share_interaction"),
             ):
                 writer.writerow([
                     case, factor,
@@ -244,12 +287,13 @@ def plot_surface_C(case: str, data: dict, out_dir: Path) -> None:
 
     fig = plt.figure(figsize=(10.0, 7.0))
     ax = fig.add_subplot(111, projection="3d")
-    surf = ax.plot_surface(x, y, z, cmap="viridis", edgecolor="k",
-                           linewidth=0.25, alpha=0.92)
+    surf = ax.plot_surface(x, y, z, cmap="cividis", edgecolor="k",
+                           linewidth=0.25, alpha=0.92, norm=_color_norm(z))
+    ax.set_zlim(*_zlim_low_fraction(z))
     ax.set_xlabel("t_green, сек")
     ax.set_ylabel("t_red, сек")
     ax.set_zlabel("C")
-    ax.set_title(f"{case}: поверхность критерия C")
+    ax.set_title(f"{case}: поверхность критерия C (низ 10% по Z)")
     fig.colorbar(surf, ax=ax, shrink=0.6, label="C")
     fig.tight_layout()
     fig.savefig(out_dir / "surface_C.png")
@@ -263,12 +307,13 @@ def plot_surface_Y(case: str, data: dict, out_dir: Path) -> None:
 
     fig = plt.figure(figsize=(10.0, 7.0))
     ax = fig.add_subplot(111, projection="3d")
-    surf = ax.plot_surface(x, y, z, cmap="plasma", edgecolor="k",
-                           linewidth=0.25, alpha=0.92)
+    surf = ax.plot_surface(x, y, z, cmap="coolwarm", edgecolor="k",
+                           linewidth=0.25, alpha=0.92, norm=_color_norm(z))
+    ax.set_zlim(*_zlim_low_fraction(z))
     ax.set_xlabel("t_green, сек")
     ax.set_ylabel("t_red, сек")
     ax.set_zlabel("Y, сек")
-    ax.set_title(f"{case}: поверхность среднего ожидания Y")
+    ax.set_title(f"{case}: поверхность среднего ожидания Y (низ 10% по Z)")
     fig.colorbar(surf, ax=ax, shrink=0.6, label="Y, сек")
     fig.tight_layout()
     fig.savefig(out_dir / "surface_Y.png")
@@ -285,11 +330,12 @@ def plot_surface_max_queue(case: str, data: dict, out_dir: Path,
     fig = plt.figure(figsize=(10.0, 7.0))
     ax = fig.add_subplot(111, projection="3d")
     surf = ax.plot_surface(x, y, z, cmap=cmap, edgecolor="k",
-                           linewidth=0.25, alpha=0.92)
+                           linewidth=0.25, alpha=0.92, norm=_color_norm(z))
+    ax.set_zlim(*_zlim_low_fraction(z))
     ax.set_xlabel("t_green, сек")
     ax.set_ylabel("t_red, сек")
     ax.set_zlabel("машин")
-    ax.set_title(f"{case}: {title}")
+    ax.set_title(f"{case}: {title} (низ 10% по Z)")
     fig.colorbar(surf, ax=ax, shrink=0.6, label="машин")
     fig.tight_layout()
     fig.savefig(out_dir / filename)
@@ -308,34 +354,16 @@ def plot_surface_max_queue_zoom(case: str, data: dict, out_dir: Path,
 
     fig = plt.figure(figsize=(10.0, 7.0))
     ax = fig.add_subplot(111, projection="3d")
-    surf = ax.plot_surface(x, y, z, cmap="magma", edgecolor="k",
-                           linewidth=0.3, alpha=0.92)
+    surf = ax.plot_surface(x, y, z, cmap="inferno", edgecolor="k",
+                           linewidth=0.3, alpha=0.92, norm=_color_norm(z))
+    ax.set_zlim(*_zlim_low_fraction(z))
     ax.set_xlabel("t_green, сек")
     ax.set_ylabel("t_red, сек")
     ax.set_zlabel("машин")
-    ax.set_title(f"{case}: max queue, t_green >= {min_green:g}")
+    ax.set_title(f"{case}: max queue, t_green >= {min_green:g} (низ 10% по Z)")
     fig.colorbar(surf, ax=ax, shrink=0.6, label="машин")
     fig.tight_layout()
     fig.savefig(out_dir / "surface_max_queue_zoom.png")
-    plt.close(fig)
-
-
-def plot_surface_max_queue_log(case: str, data: dict, out_dir: Path) -> None:
-    green, red = data["green"], data["red"]
-    x, y = np.meshgrid(green, red)
-    z = np.log10(np.maximum(data["max_queue"], 1e-9))
-
-    fig = plt.figure(figsize=(10.0, 7.0))
-    ax = fig.add_subplot(111, projection="3d")
-    surf = ax.plot_surface(x, y, z, cmap="magma", edgecolor="k",
-                           linewidth=0.25, alpha=0.92)
-    ax.set_xlabel("t_green, сек")
-    ax.set_ylabel("t_red, сек")
-    ax.set_zlabel("log10(макс. очередь)")
-    ax.set_title(f"{case}: логарифм максимальной очереди")
-    fig.colorbar(surf, ax=ax, shrink=0.6, label="log10(машин)")
-    fig.tight_layout()
-    fig.savefig(out_dir / "surface_max_queue_log.png")
     plt.close(fig)
 
 
@@ -363,7 +391,7 @@ def plot_contour_C(case: str, data: dict, out_dir: Path) -> None:
     minimum = np.unravel_index(np.argmin(z), z.shape)
 
     fig, ax = plt.subplots(figsize=(8.5, 6.0))
-    contour = ax.contourf(green, red, z, levels=15, cmap="viridis")
+    contour = ax.contourf(green, red, z, levels=15, cmap="cividis")
     lines = ax.contour(green, red, z, levels=10, colors="black", linewidths=0.5)
     ax.clabel(lines, inline=True, fontsize=7)
     ax.scatter(green[minimum[1]], red[minimum[0]], color="red", s=60,
@@ -405,7 +433,7 @@ def plot_slices(case: str, data: dict, out_dir: Path) -> None:
 
 
 def main() -> int:
-    criteria = read_criteria()
+    criteria = dict(DEFAULT_CRITERIA)
     cases: dict[str, dict] = {}
 
     for case in CASES:
@@ -434,15 +462,14 @@ def main() -> int:
         plot_surface_Y(case, data, data["out_dir"])
         plot_surface_max_queue(case, data, data["out_dir"],
                                "max_queue_a", "surface_max_queue_a.png",
-                               "максимальная очередь A", "Blues")
+                               "максимальная очередь A", "YlOrRd")
         plot_surface_max_queue(case, data, data["out_dir"],
                                "max_queue_b", "surface_max_queue_b.png",
-                               "максимальная очередь B", "Reds")
+                               "максимальная очередь B", "YlGnBu")
         plot_surface_max_queue(case, data, data["out_dir"],
                                "max_queue", "surface_max_queue.png",
-                               "максимальная очередь одной из сторон", "magma")
+                               "максимальная очередь одной из сторон", "inferno")
         plot_surface_max_queue_zoom(case, data, data["out_dir"])
-        plot_surface_max_queue_log(case, data, data["out_dir"])
         plot_max_queue_slices(case, data, data["out_dir"])
         plot_contour_C(case, data, data["out_dir"])
         plot_slices(case, data, data["out_dir"])
