@@ -201,7 +201,7 @@ def _zlim_low_fraction(z: np.ndarray, fraction: float = 0.1) -> tuple[float, flo
     return z_min, z_min + fraction * span
 
 
-def _color_norm(z: np.ndarray, gamma: float = 4.0) -> PowerNorm:
+def _color_norm(z: np.ndarray, gamma: float = 0.1) -> PowerNorm:
     """Нелинейная нормировка цвета по обрезанному диапазону Z.
 
     Берём те же границы, что и у оси (низ 10% размаха), и применяем
